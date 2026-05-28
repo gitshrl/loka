@@ -10,7 +10,7 @@ execution contracts.
 
 ## Status
 
-This repository is under active product development. The current implementation includes:
+Current implementation:
 
 - `ask`, `chat`, and proposal-first `remember`
 - persisted sessions with SQLite FTS search, summaries, and token usage records
@@ -25,6 +25,32 @@ This repository is under active product development. The current implementation 
 - host, Docker, SSH, cloud VM, and serverless runtime executors
 - Ratatui terminal operator interface
 - Telegram webhook gateway
+
+## Install
+
+Download a binary archive from the latest GitHub release:
+
+- Linux x64: `loka-x86_64-unknown-linux-gnu.tar.gz`
+- Linux ARM64: `loka-aarch64-unknown-linux-gnu.tar.gz`
+- macOS Apple Silicon: `loka-aarch64-apple-darwin.tar.gz`
+- macOS Intel: `loka-x86_64-apple-darwin.tar.gz`
+- Windows x64: `loka-x86_64-pc-windows-msvc.zip`
+
+Linux x64:
+
+```bash
+curl -L https://github.com/gitshrl/loka/releases/latest/download/loka-x86_64-unknown-linux-gnu.tar.gz -o loka.tar.gz
+tar -xzf loka.tar.gz
+mkdir -p ~/.local/bin
+install -m 755 loka/loka ~/.local/bin/loka
+loka health
+```
+
+From source:
+
+```bash
+cargo install --path .
+```
 
 ## Configuration
 
@@ -55,12 +81,6 @@ memory calls explicit.
 State defaults to `~/.loka`. The default workspace is `~/.loka/workspace`.
 
 ## Commands
-
-Install the CLI once:
-
-```bash
-cargo install --path .
-```
 
 ```bash
 loka ask --recall --stream "what should i work on next?"

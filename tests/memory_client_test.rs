@@ -1,9 +1,9 @@
 use httpmock::prelude::*;
-use loka_agent::wiki::{NoteInput, WikiClient};
+use loka_agent::memory::{MemoryClient, MemoryNoteInput};
 use serde_json::json;
 
 #[tokio::test]
-async fn rag_posts_query_to_personal_wiki() {
+async fn recall_posts_query_to_memory_api() {
     let server = MockServer::start();
     let rag = server.mock(|when, then| {
         when.method(POST).path("/api/rag").json_body(json!({
@@ -16,22 +16,25 @@ async fn rag_posts_query_to_personal_wiki() {
             .header("content-type", "application/json")
             .json_body(json!({
                 "mode": "fts",
-                "markdown": "# Wiki Context\n- ship the platform spine"
+                "markdown": "# Memory Context\n- ship the platform spine"
             }));
     });
 
-    let client = WikiClient::new(server.base_url());
+    let client = MemoryClient::new(server.base_url());
     let output = client
-        .rag("next work", 6, 1)
+        .recall("next work", 6, 1)
         .await
         .expect("rag should succeed");
 
     rag.assert();
-    assert_eq!(output.markdown, "# Wiki Context\n- ship the platform spine");
+    assert_eq!(
+        output.markdown,
+        "# Memory Context\n- ship the platform spine"
+    );
 }
 
 #[tokio::test]
-async fn add_note_defaults_to_proposal_mode() {
+async fn propose_note_defaults_to_proposal_mode() {
     let server = MockServer::start();
     let note = server.mock(|when, then| {
         when.method(POST).path("/api/notes").json_body(json!({
@@ -51,9 +54,9 @@ async fn add_note_defaults_to_proposal_mode() {
             }));
     });
 
-    let client = WikiClient::new(server.base_url());
+    let client = MemoryClient::new(server.base_url());
     let proposal_id = client
-        .add_note(NoteInput {
+        .propose_note(MemoryNoteInput {
             title: "Decision".to_string(),
             body: "Use Rust for the agent control plane.".to_string(),
             kind: "note".to_string(),
@@ -68,7 +71,7 @@ async fn add_note_defaults_to_proposal_mode() {
 }
 
 #[tokio::test]
-async fn add_note_rejects_direct_write_response() {
+async fn propose_note_rejects_direct_write_response() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(POST).path("/api/notes");
@@ -80,9 +83,9 @@ async fn add_note_rejects_direct_write_response() {
             }));
     });
 
-    let client = WikiClient::new(server.base_url());
+    let client = MemoryClient::new(server.base_url());
     let error = client
-        .add_note(NoteInput {
+        .propose_note(MemoryNoteInput {
             title: "Decision".to_string(),
             body: "Keep writes proposal-first.".to_string(),
             kind: "note".to_string(),
@@ -119,7 +122,7 @@ async fn list_pending_proposals_uses_status_and_limit_query() {
             }));
     });
 
-    let client = WikiClient::new(server.base_url());
+    let client = MemoryClient::new(server.base_url());
     let output = client
         .pending_proposals(5)
         .await

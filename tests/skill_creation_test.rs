@@ -10,9 +10,9 @@ use serde_json::json;
 use std::path::PathBuf;
 
 #[tokio::test]
-async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+async fn propose_from_session_creates_memory_and_local_skill_proposals() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let skills = SkillStore::in_memory().expect("skills");
     let session_id = sessions
@@ -33,7 +33,7 @@ async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
         )
         .expect("assistant turn");
 
-    let extraction = llm.mock(|when, then| {
+    let extraction = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Create exactly one Loka skill proposal")
@@ -61,7 +61,7 @@ async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
             }));
     });
 
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST)
             .path("/api/notes")
             .body_includes("Skill proposal: Rust review")
@@ -80,7 +80,7 @@ async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
             }));
     });
 
-    let engine = SkillCreationEngine::new(app_config(&llm, &wiki), sessions, skills);
+    let engine = SkillCreationEngine::new(app_config(&model_client, &memory), sessions, skills);
     let output = engine
         .propose_from_session(ProposeSkillFromSessionRequest {
             session_id: session_id.clone(),
@@ -92,12 +92,12 @@ async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
     proposal.assert();
     let ProposeSkillFromSessionOutput::ProposalCreated {
         skill,
-        wiki_proposal_id,
+        memory_proposal_id,
     } = output
     else {
         panic!("expected skill proposal");
     };
-    assert_eq!(wiki_proposal_id, "proposal-skill-1");
+    assert_eq!(memory_proposal_id, "proposal-skill-1");
     assert_eq!(skill.name, "Rust review");
     assert_eq!(skill.status, SkillStatus::Proposed);
     assert_eq!(skill.required_tools, vec!["read_file", "search_files"]);
@@ -105,8 +105,8 @@ async fn propose_from_session_creates_wiki_and_local_skill_proposals() {
 
 #[tokio::test]
 async fn propose_from_session_skips_when_no_reusable_workflow_exists() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let skills = SkillStore::in_memory().expect("skills");
     let session_id = sessions.create_session("casual chat").expect("session");
@@ -114,7 +114,7 @@ async fn propose_from_session_skips_when_no_reusable_workflow_exists() {
         .append_turn(&session_id, Role::User, "hello")
         .expect("turn");
 
-    llm.mock(|when, then| {
+    model_client.mock(|when, then| {
         when.method(POST).path("/v1/chat/completions");
         then.status(200)
             .header("content-type", "application/json")
@@ -125,12 +125,12 @@ async fn propose_from_session_skips_when_no_reusable_workflow_exists() {
             }));
     });
 
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST).path("/api/notes");
         then.status(500);
     });
 
-    let engine = SkillCreationEngine::new(app_config(&llm, &wiki), sessions, skills);
+    let engine = SkillCreationEngine::new(app_config(&model_client, &memory), sessions, skills);
     let output = engine
         .propose_from_session(ProposeSkillFromSessionRequest { session_id })
         .await
@@ -140,14 +140,14 @@ async fn propose_from_session_skips_when_no_reusable_workflow_exists() {
     assert_eq!(proposal.calls(), 0);
 }
 
-fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
     AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

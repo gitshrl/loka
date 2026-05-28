@@ -22,12 +22,12 @@ This repository is under active product development. The current implementation 
 Loka reads config from `~/.loka/config.toml`, with environment variables taking precedence.
 
 ```toml
-pengepul_base_url = "http://127.0.0.1:8317"
-pengepul_api_key = "sk-development-example"
-wiki_base_url = "http://127.0.0.1:4321"
+model_base_url = "http://127.0.0.1:8317"
+model_api_key = "sk-development-example"
+memory_base_url = "http://127.0.0.1:4321"
 model = "gpt-5.5"
 agent_id = "loka-agent"
-provider_id = "pengepul"
+model_protocol = "openai-compatible"
 state_dir = "/home/dev/.loka"
 working_dir = "/home/dev/code/lab/loka"
 telegram_bot_token = "telegram-token"

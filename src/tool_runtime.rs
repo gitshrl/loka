@@ -12,9 +12,9 @@ use tokio::time::timeout;
 
 use crate::config::AppConfig;
 use crate::learning::{LearnSessionOutput, LearnSessionRequest, learn_from_session};
-use crate::llm::LlmClient;
+use crate::memory::{MemoryClient, MemoryNoteInput};
+use crate::model::ModelClient;
 use crate::session::SessionStore;
-use crate::wiki::{NoteInput, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
@@ -30,7 +30,7 @@ pub struct ToolResult {
 #[derive(Debug)]
 pub struct ToolRuntime {
     sessions: SessionStore,
-    wiki: Option<WikiClient>,
+    memory: Option<MemoryClient>,
     learning: Option<LearningRuntime>,
     agent_id: String,
     host: Option<HostRuntime>,
@@ -39,8 +39,8 @@ pub struct ToolRuntime {
 #[derive(Debug)]
 struct LearningRuntime {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,14 +64,14 @@ struct SessionSearchInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct WikiRagInput {
+struct MemorySearchInput {
     query: String,
     limit: Option<u8>,
     depth: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WikiAddNoteInput {
+struct MemoryProposeInput {
     title: String,
     body: String,
     tags: Option<Vec<String>>,
@@ -116,7 +116,7 @@ impl ToolRuntime {
     pub fn new(sessions: SessionStore) -> Self {
         Self {
             sessions,
-            wiki: None,
+            memory: None,
             learning: None,
             agent_id: "loka-agent".to_string(),
             host: None,
@@ -124,8 +124,8 @@ impl ToolRuntime {
     }
 
     #[must_use]
-    pub fn with_wiki(mut self, wiki: WikiClient, agent_id: impl Into<String>) -> Self {
-        self.wiki = Some(wiki);
+    pub fn with_memory(mut self, memory: MemoryClient, agent_id: impl Into<String>) -> Self {
+        self.memory = Some(memory);
         self.agent_id = agent_id.into();
         self
     }
@@ -133,8 +133,12 @@ impl ToolRuntime {
     #[must_use]
     pub fn with_learning_config(mut self, config: AppConfig) -> Self {
         self.learning = Some(LearningRuntime {
-            llm: LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key.clone()),
-            wiki: WikiClient::new(&config.wiki_base_url),
+            model_client: ModelClient::with_protocol(
+                &config.model_base_url,
+                config.model_api_key.clone(),
+                config.model_protocol,
+            ),
+            memory: MemoryClient::new(&config.memory_base_url),
             config,
         });
         self
@@ -160,8 +164,8 @@ impl ToolRuntime {
         match call.name.as_str() {
             "session_list" => self.execute_session_list(call.input),
             "session_search" => self.execute_session_search(call.input),
-            "wiki_rag" => self.execute_wiki_rag(call.input).await,
-            "wiki_add_note" => self.execute_wiki_add_note(call.input).await,
+            "memory_search" => self.execute_memory_search(call.input).await,
+            "memory_propose" => self.execute_memory_propose(call.input).await,
             "read_file" => self.execute_read_file(call.input),
             "search_files" => self.execute_search_files(call.input),
             "git_status" => self.execute_git_status(call.input).await,
@@ -216,14 +220,14 @@ impl ToolRuntime {
         })
     }
 
-    async fn execute_wiki_rag(&self, input: Value) -> Result<ToolResult> {
-        let input: WikiRagInput = serde_json::from_value(input)?;
-        let wiki = self
-            .wiki
+    async fn execute_memory_search(&self, input: Value) -> Result<ToolResult> {
+        let input: MemorySearchInput = serde_json::from_value(input)?;
+        let memory = self
+            .memory
             .as_ref()
-            .ok_or_else(|| anyhow!("wiki_rag requires personal-wiki configuration"))?;
-        let context = wiki
-            .rag(
+            .ok_or_else(|| anyhow!("memory_search requires memory API configuration"))?;
+        let context = memory
+            .recall(
                 &input.query,
                 input.limit.unwrap_or(6),
                 input.depth.unwrap_or(1),
@@ -234,14 +238,14 @@ impl ToolRuntime {
         })
     }
 
-    async fn execute_wiki_add_note(&self, input: Value) -> Result<ToolResult> {
-        let input: WikiAddNoteInput = serde_json::from_value(input)?;
-        let wiki = self
-            .wiki
+    async fn execute_memory_propose(&self, input: Value) -> Result<ToolResult> {
+        let input: MemoryProposeInput = serde_json::from_value(input)?;
+        let memory = self
+            .memory
             .as_ref()
-            .ok_or_else(|| anyhow!("wiki_add_note requires personal-wiki configuration"))?;
-        let proposal_id = wiki
-            .add_note(NoteInput {
+            .ok_or_else(|| anyhow!("memory_propose requires memory API configuration"))?;
+        let proposal_id = memory
+            .propose_note(MemoryNoteInput {
                 title: input.title,
                 body: input.body,
                 kind: "note".to_string(),
@@ -262,8 +266,8 @@ impl ToolRuntime {
             .ok_or_else(|| anyhow!("learn_session requires learning configuration"))?;
         let output = learn_from_session(
             &learning.config,
-            &learning.llm,
-            &learning.wiki,
+            &learning.model_client,
+            &learning.memory,
             &self.sessions,
             LearnSessionRequest {
                 session_id: input.session_id,

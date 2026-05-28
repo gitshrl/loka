@@ -7,12 +7,12 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn chat_reuses_one_session_and_sends_prior_turns() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let state = tempfile::tempdir().expect("state");
     let sessions = SessionStore::open(state.path()).expect("sessions");
 
-    let first = llm.mock(|when, then| {
+    let first = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("hello")
@@ -26,7 +26,7 @@ async fn chat_reuses_one_session_and_sends_prior_turns() {
                 ]
             }));
     });
-    let second = llm.mock(|when, then| {
+    let second = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("First answer.")
@@ -41,7 +41,7 @@ async fn chat_reuses_one_session_and_sends_prior_turns() {
             }));
     });
 
-    let agent = Agent::with_session_store(app_config(&llm, &wiki), sessions);
+    let agent = Agent::with_session_store(app_config(&model_client, &memory), sessions);
     let output = agent
         .chat(ChatSessionRequest {
             messages: vec!["hello".to_string(), "follow up".to_string()],
@@ -68,12 +68,12 @@ async fn chat_reuses_one_session_and_sends_prior_turns() {
 
 #[tokio::test]
 async fn chat_summarizes_long_session_as_proposal() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let state = tempfile::tempdir().expect("state");
     let sessions = SessionStore::open(state.path()).expect("sessions");
 
-    let chat_completion = llm.mock(|when, then| {
+    let chat_completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_excludes("Summarize this Loka session")
@@ -87,7 +87,7 @@ async fn chat_summarizes_long_session_as_proposal() {
                 ]
             }));
     });
-    let summary_completion = llm.mock(|when, then| {
+    let summary_completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Summarize this Loka session")
@@ -101,7 +101,7 @@ async fn chat_summarizes_long_session_as_proposal() {
                 ]
             }));
     });
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST)
             .path("/api/notes")
             .body_includes("- durable chat summary")
@@ -118,7 +118,7 @@ async fn chat_summarizes_long_session_as_proposal() {
             }));
     });
 
-    let agent = Agent::with_session_store(app_config(&llm, &wiki), sessions);
+    let agent = Agent::with_session_store(app_config(&model_client, &memory), sessions);
     let output = agent
         .chat(ChatSessionRequest {
             messages: (1..=6).map(|index| format!("turn {index}")).collect(),
@@ -143,10 +143,10 @@ async fn chat_summarizes_long_session_as_proposal() {
 
 #[tokio::test]
 async fn chat_requires_at_least_one_message() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
-    let agent = Agent::with_session_store(app_config(&llm, &wiki), sessions);
+    let agent = Agent::with_session_store(app_config(&model_client, &memory), sessions);
 
     let error = agent
         .chat(ChatSessionRequest {
@@ -159,14 +159,14 @@ async fn chat_requires_at_least_one_message() {
     assert!(error.to_string().contains("at least one message"));
 }
 
-fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
     AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

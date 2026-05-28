@@ -1,12 +1,12 @@
 use httpmock::prelude::*;
 use loka_agent::learning::pending_learning_proposals;
-use loka_agent::wiki::WikiClient;
+use loka_agent::memory::MemoryClient;
 use serde_json::json;
 
 #[tokio::test]
 async fn pending_learning_review_filters_learning_proposals() {
-    let wiki = MockServer::start();
-    wiki.mock(|when, then| {
+    let memory = MockServer::start();
+    memory.mock(|when, then| {
         when.method(GET)
             .path("/api/proposals")
             .query_param("status", "pending")
@@ -34,7 +34,7 @@ async fn pending_learning_review_filters_learning_proposals() {
             }));
     });
 
-    let client = WikiClient::new(wiki.base_url());
+    let client = MemoryClient::new(memory.base_url());
     let proposals = pending_learning_proposals(&client, 10)
         .await
         .expect("learning proposals");

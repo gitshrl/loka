@@ -9,10 +9,10 @@ fn prompt_orders_stable_context_then_volatile() {
     let input = PromptInput {
         agent_id: "loka-agent".to_string(),
         model: "gpt-5.5".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         session_id: Some("session-1".to_string()),
         system_message: Some("Caller system message.".to_string()),
-        memory_markdown: Some("# Wiki Context\n- user prefers direct answers".to_string()),
+        memory_markdown: Some("# Memory Context\n- user prefers direct answers".to_string()),
         context_files: vec![ContextFile {
             path: PathBuf::from("/repo/AGENTS.md"),
             body: "Project instruction.".to_string(),
@@ -30,6 +30,8 @@ fn prompt_orders_stable_context_then_volatile() {
     assert!(context_idx < volatile_idx);
     assert!(assembled.contains("Project instruction."));
     assert!(assembled.contains("user prefers direct answers"));
+    assert!(assembled.contains("<memory-context>"));
+    assert!(assembled.contains("not new user input"));
     assert!(assembled.contains("Session ID: session-1"));
 }
 
@@ -38,7 +40,7 @@ fn prompt_is_deterministic_for_identical_input() {
     let input = PromptInput {
         agent_id: "loka-agent".to_string(),
         model: "gpt-5.5".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         session_id: None,
         system_message: None,
         memory_markdown: None,

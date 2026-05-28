@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::{MemoryClient, MemoryNoteInput, PendingProposal};
 use crate::messages::Message;
+use crate::model::{ChatRequest, ModelClient};
 use crate::session::{SessionStore, SessionTurn, ToolCallRecord};
 use crate::session_context::format_session_context;
-use crate::wiki::{NoteInput, PendingProposal, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearnSessionRequest {
@@ -21,8 +21,8 @@ pub enum LearnSessionOutput {
 #[derive(Debug)]
 pub struct LearningEngine {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
     sessions: SessionStore,
 }
 
@@ -30,8 +30,12 @@ impl LearningEngine {
     #[must_use]
     pub fn new(config: AppConfig, sessions: SessionStore) -> Self {
         Self {
-            llm: LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key.clone()),
-            wiki: WikiClient::new(&config.wiki_base_url),
+            model_client: ModelClient::with_protocol(
+                &config.model_base_url,
+                config.model_api_key.clone(),
+                config.model_protocol,
+            ),
+            memory: MemoryClient::new(&config.memory_base_url),
             config,
             sessions,
         }
@@ -42,16 +46,23 @@ impl LearningEngine {
     /// # Errors
     ///
     /// Returns an error when the session does not exist, turn retrieval fails, model extraction
-    /// fails, or `personal-wiki` rejects the proposal-first note write.
+    /// fails, or `memory API` rejects the proposal-first note write.
     pub async fn learn_session(&self, request: LearnSessionRequest) -> Result<LearnSessionOutput> {
-        learn_from_session(&self.config, &self.llm, &self.wiki, &self.sessions, request).await
+        learn_from_session(
+            &self.config,
+            &self.model_client,
+            &self.memory,
+            &self.sessions,
+            request,
+        )
+        .await
     }
 }
 
 pub(crate) async fn learn_from_session(
     config: &AppConfig,
-    llm: &LlmClient,
-    wiki: &WikiClient,
+    model_client: &ModelClient,
+    memory: &MemoryClient,
     sessions: &SessionStore,
     request: LearnSessionRequest,
 ) -> Result<LearnSessionOutput> {
@@ -61,7 +72,7 @@ pub(crate) async fn learn_from_session(
     }
 
     let tool_calls = sessions.session_tool_calls(&request.session_id)?;
-    let extraction = llm
+    let extraction = model_client
         .chat(ChatRequest {
             model: config.model.clone(),
             messages: vec![
@@ -80,8 +91,8 @@ pub(crate) async fn learn_from_session(
         return Ok(LearnSessionOutput::NoDurableKnowledge);
     }
 
-    let proposal_id = wiki
-        .add_note(NoteInput {
+    let proposal_id = memory
+        .propose_note(MemoryNoteInput {
             title: format!("Session learning: {}", request.session_id),
             body: body.to_string(),
             kind: "note".to_string(),
@@ -93,16 +104,16 @@ pub(crate) async fn learn_from_session(
     Ok(LearnSessionOutput::ProposalCreated { proposal_id })
 }
 
-/// Lists pending learning proposals from `personal-wiki`.
+/// Lists pending learning proposals from `memory API`.
 ///
 /// # Errors
 ///
-/// Returns an error when `personal-wiki` cannot list pending proposals.
+/// Returns an error when `memory API` cannot list pending proposals.
 pub async fn pending_learning_proposals(
-    wiki: &WikiClient,
+    memory: &MemoryClient,
     limit: u16,
 ) -> Result<Vec<PendingProposal>> {
-    let proposals = wiki.pending_proposals(limit).await?;
+    let proposals = memory.pending_proposals(limit).await?;
     Ok(proposals.into_iter().filter(is_learning_proposal).collect())
 }
 

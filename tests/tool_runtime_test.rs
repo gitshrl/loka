@@ -1,9 +1,9 @@
 use httpmock::prelude::*;
 use loka_agent::config::AppConfig;
+use loka_agent::memory::MemoryClient;
 use loka_agent::messages::Role;
 use loka_agent::session::{SessionStore, ToolCallStatus};
 use loka_agent::tool_runtime::{ToolCall, ToolRuntime};
-use loka_agent::wiki::WikiClient;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -109,9 +109,9 @@ async fn tool_runtime_persists_failed_tool_call_transcript() {
 }
 
 #[tokio::test]
-async fn tool_runtime_executes_wiki_rag() {
-    let wiki = MockServer::start();
-    let rag = wiki.mock(|when, then| {
+async fn tool_runtime_executes_memory_search() {
+    let memory = MockServer::start();
+    let rag = memory.mock(|when, then| {
         when.method(POST).path("/api/rag").json_body(json!({
             "query": "runtime",
             "limit": 6,
@@ -127,10 +127,10 @@ async fn tool_runtime_executes_wiki_rag() {
     });
 
     let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"))
-        .with_wiki(WikiClient::new(wiki.base_url()), "loka-agent");
+        .with_memory(MemoryClient::new(memory.base_url()), "loka-agent");
     let result = runtime
         .execute(ToolCall {
-            name: "wiki_rag".to_string(),
+            name: "memory_search".to_string(),
             input: json!({ "query": "runtime" }),
         })
         .await
@@ -144,9 +144,9 @@ async fn tool_runtime_executes_wiki_rag() {
 }
 
 #[tokio::test]
-async fn tool_runtime_executes_wiki_add_note_in_proposal_mode() {
-    let wiki = MockServer::start();
-    let note = wiki.mock(|when, then| {
+async fn tool_runtime_executes_memory_propose_in_proposal_mode() {
+    let memory = MockServer::start();
+    let note = memory.mock(|when, then| {
         when.method(POST).path("/api/notes").json_body(json!({
             "title": "Tool note",
             "body": "Tool runtime writes proposal-first.",
@@ -165,10 +165,10 @@ async fn tool_runtime_executes_wiki_add_note_in_proposal_mode() {
     });
 
     let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"))
-        .with_wiki(WikiClient::new(wiki.base_url()), "loka-agent");
+        .with_memory(MemoryClient::new(memory.base_url()), "loka-agent");
     let result = runtime
         .execute(ToolCall {
-            name: "wiki_add_note".to_string(),
+            name: "memory_propose".to_string(),
             input: json!({
                 "title": "Tool note",
                 "body": "Tool runtime writes proposal-first.",
@@ -184,8 +184,8 @@ async fn tool_runtime_executes_wiki_add_note_in_proposal_mode() {
 
 #[tokio::test]
 async fn tool_runtime_executes_learn_session() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let session_id = sessions
         .create_session("runtime learning")
@@ -194,28 +194,28 @@ async fn tool_runtime_executes_learn_session() {
         .append_turn(
             &session_id,
             Role::User,
-            "Decision: keep durable memory in personal-wiki.",
+            "Decision: keep durable memory in memory API.",
         )
         .expect("turn");
 
-    let completion = llm.mock(|when, then| {
+    let completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Extract only durable knowledge")
-            .body_includes("durable memory in personal-wiki");
+            .body_includes("durable memory in memory API");
 
         then.status(200)
             .header("content-type", "application/json")
             .json_body(json!({
                 "choices": [
-                    { "message": { "content": "- Decision: durable memory stays in personal-wiki." } }
+                    { "message": { "content": "- Decision: durable memory stays in memory API." } }
                 ]
             }));
     });
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST).path("/api/notes").json_body(json!({
             "title": format!("Session learning: {session_id}"),
-            "body": "- Decision: durable memory stays in personal-wiki.",
+            "body": "- Decision: durable memory stays in memory API.",
             "kind": "note",
             "agentId": "loka-agent",
             "tags": ["learning", "session"],
@@ -230,7 +230,8 @@ async fn tool_runtime_executes_learn_session() {
             }));
     });
 
-    let runtime = ToolRuntime::new(sessions).with_learning_config(app_config(&llm, &wiki));
+    let runtime =
+        ToolRuntime::new(sessions).with_learning_config(app_config(&model_client, &memory));
     let result = runtime
         .execute(ToolCall {
             name: "learn_session".to_string(),
@@ -387,14 +388,14 @@ async fn host_runtime_git_status_runs_in_workspace() {
     );
 }
 
-fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
     AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

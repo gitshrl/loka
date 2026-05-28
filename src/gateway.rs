@@ -18,12 +18,12 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::net::TcpListener;
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::MemoryClient;
 use crate::messages::{Message, Role, Transcript};
+use crate::model::{ChatRequest, ModelClient};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
 use crate::skills::SkillStore;
-use crate::wiki::WikiClient;
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
@@ -350,8 +350,8 @@ impl GatewayAgent for LokaGatewayAgent {
             };
             let memory_markdown = if request.recall {
                 Some(
-                    WikiClient::new(&self.config.wiki_base_url)
-                        .rag(&request.text, RECALL_LIMIT, RECALL_DEPTH)
+                    MemoryClient::new(&self.config.memory_base_url)
+                        .recall(&request.text, RECALL_LIMIT, RECALL_DEPTH)
                         .await?
                         .markdown,
                 )
@@ -362,7 +362,7 @@ impl GatewayAgent for LokaGatewayAgent {
                 .build(&PromptInput {
                     agent_id: self.config.agent_id.clone(),
                     model: self.config.model.clone(),
-                    provider_id: self.config.provider_id.clone(),
+                    model_protocol: self.config.model_protocol,
                     session_id: Some(session_id.clone()),
                     system_message: Some(gateway_system_message(&skills)),
                     memory_markdown,
@@ -385,9 +385,10 @@ impl GatewayAgent for LokaGatewayAgent {
                 sessions.append_turn(&session_id, Role::User, &request.text)?;
             }
 
-            let output = LlmClient::new(
-                &self.config.pengepul_base_url,
-                self.config.pengepul_api_key.clone(),
+            let output = ModelClient::with_protocol(
+                &self.config.model_base_url,
+                self.config.model_api_key.clone(),
+                self.config.model_protocol,
             )
             .chat(ChatRequest {
                 model: self.config.model.clone(),

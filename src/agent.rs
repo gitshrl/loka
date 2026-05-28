@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow, bail};
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::{MemoryClient, MemoryNoteInput};
 use crate::messages::{Message, Role, Transcript};
+use crate::model::{ChatRequest, ModelClient};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
 use crate::session_summary::{SessionSummaryOutput, SessionSummaryRequest, summarize_session};
 use crate::skills::SkillStore;
-use crate::wiki::{NoteInput, WikiClient};
 use time::OffsetDateTime;
 
 const RECALL_LIMIT: u8 = 6;
@@ -58,8 +58,8 @@ impl ChatSession {
 #[derive(Debug)]
 pub struct Agent {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
     prompt_builder: PromptBuilder,
     sessions: Option<SessionStore>,
     skills: Option<SkillStore>,
@@ -69,11 +69,12 @@ impl Agent {
     #[must_use]
     pub fn new(config: AppConfig) -> Self {
         Self {
-            llm: LlmClient::new(
-                config.pengepul_base_url.clone(),
-                config.pengepul_api_key.clone(),
+            model_client: ModelClient::with_protocol(
+                config.model_base_url.clone(),
+                config.model_api_key.clone(),
+                config.model_protocol,
             ),
-            wiki: WikiClient::new(config.wiki_base_url.clone()),
+            memory: MemoryClient::new(config.memory_base_url.clone()),
             prompt_builder: PromptBuilder::new(),
             config,
             sessions: None,
@@ -84,11 +85,12 @@ impl Agent {
     #[must_use]
     pub fn with_session_store(config: AppConfig, sessions: SessionStore) -> Self {
         Self {
-            llm: LlmClient::new(
-                config.pengepul_base_url.clone(),
-                config.pengepul_api_key.clone(),
+            model_client: ModelClient::with_protocol(
+                config.model_base_url.clone(),
+                config.model_api_key.clone(),
+                config.model_protocol,
             ),
-            wiki: WikiClient::new(config.wiki_base_url.clone()),
+            memory: MemoryClient::new(config.memory_base_url.clone()),
             prompt_builder: PromptBuilder::new(),
             config,
             sessions: Some(sessions),
@@ -99,11 +101,12 @@ impl Agent {
     #[must_use]
     pub fn with_stores(config: AppConfig, sessions: SessionStore, skills: SkillStore) -> Self {
         Self {
-            llm: LlmClient::new(
-                config.pengepul_base_url.clone(),
-                config.pengepul_api_key.clone(),
+            model_client: ModelClient::with_protocol(
+                config.model_base_url.clone(),
+                config.model_api_key.clone(),
+                config.model_protocol,
             ),
-            wiki: WikiClient::new(config.wiki_base_url.clone()),
+            memory: MemoryClient::new(config.memory_base_url.clone()),
             prompt_builder: PromptBuilder::new(),
             config,
             sessions: Some(sessions),
@@ -133,7 +136,7 @@ impl Agent {
         self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
 
         let response = self
-            .llm
+            .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages: transcript.into_messages(),
@@ -174,7 +177,7 @@ impl Agent {
         self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
 
         let response = self
-            .llm
+            .model_client
             .chat_stream(
                 ChatRequest {
                     model: self.config.model.clone(),
@@ -240,7 +243,7 @@ impl Agent {
         self.append_turn(Some(session_id), Role::User, &prompt)?;
 
         let response = self
-            .llm
+            .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages: transcript.into_messages(),
@@ -337,7 +340,7 @@ impl Agent {
         sessions.append_turn(&session.session_id, Role::User, &prompt)?;
 
         let response = self
-            .llm
+            .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages: call_transcript.into_messages(),
@@ -356,10 +359,10 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns an error when `personal-wiki` rejects the note or does not return a proposal id.
+    /// Returns an error when `memory API` rejects the note or does not return a proposal id.
     pub async fn remember(&self, title: String, body: String, tags: Vec<String>) -> Result<String> {
-        self.wiki
-            .add_note(NoteInput {
+        self.memory
+            .propose_note(MemoryNoteInput {
                 title,
                 body,
                 kind: "note".to_string(),
@@ -386,8 +389,8 @@ impl Agent {
             .ok_or_else(|| anyhow!("summarize_session_if_long requires a session store"))?;
         match summarize_session(
             &self.config,
-            &self.llm,
-            &self.wiki,
+            &self.model_client,
+            &self.memory,
             sessions,
             SessionSummaryRequest {
                 session_id: session_id.to_string(),
@@ -432,7 +435,10 @@ impl Agent {
         system_message: Option<String>,
     ) -> Result<String> {
         let memory_markdown = if recall {
-            let memory = self.wiki.rag(prompt, RECALL_LIMIT, RECALL_DEPTH).await?;
+            let memory = self
+                .memory
+                .recall(prompt, RECALL_LIMIT, RECALL_DEPTH)
+                .await?;
             Some(memory.markdown)
         } else {
             None
@@ -443,7 +449,7 @@ impl Agent {
         let prompt_input = PromptInput {
             agent_id: self.config.agent_id.clone(),
             model: self.config.model.clone(),
-            provider_id: self.config.provider_id.clone(),
+            model_protocol: self.config.model_protocol,
             session_id,
             system_message,
             memory_markdown,

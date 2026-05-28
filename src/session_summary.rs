@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::{MemoryClient, MemoryNoteInput};
 use crate::messages::Message;
+use crate::model::{ChatRequest, ModelClient};
 use crate::session::{SessionStore, SessionTurn, ToolCallRecord};
 use crate::session_context::format_session_context;
-use crate::wiki::{NoteInput, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummaryRequest {
@@ -22,8 +22,8 @@ pub enum SessionSummaryOutput {
 #[derive(Debug)]
 pub struct SessionSummaryEngine {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
     sessions: SessionStore,
 }
 
@@ -31,28 +31,39 @@ impl SessionSummaryEngine {
     #[must_use]
     pub fn new(config: AppConfig, sessions: SessionStore) -> Self {
         Self {
-            llm: LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key.clone()),
-            wiki: WikiClient::new(&config.wiki_base_url),
+            model_client: ModelClient::with_protocol(
+                &config.model_base_url,
+                config.model_api_key.clone(),
+                config.model_protocol,
+            ),
+            memory: MemoryClient::new(&config.memory_base_url),
             config,
             sessions,
         }
     }
 
-    /// Summarizes one persisted session and writes the summary as a proposal-first wiki note.
+    /// Summarizes one persisted session and writes the summary as a proposal-first memory note.
     ///
     /// # Errors
     ///
-    /// Returns an error when the session is empty, model summarization fails, or the wiki note
+    /// Returns an error when the session is empty, model summarization fails, or the memory note
     /// proposal fails.
     pub async fn summarize(&self, request: SessionSummaryRequest) -> Result<SessionSummaryOutput> {
-        summarize_session(&self.config, &self.llm, &self.wiki, &self.sessions, request).await
+        summarize_session(
+            &self.config,
+            &self.model_client,
+            &self.memory,
+            &self.sessions,
+            request,
+        )
+        .await
     }
 }
 
 pub(crate) async fn summarize_session(
     config: &AppConfig,
-    llm: &LlmClient,
-    wiki: &WikiClient,
+    model_client: &ModelClient,
+    memory: &MemoryClient,
     sessions: &SessionStore,
     request: SessionSummaryRequest,
 ) -> Result<SessionSummaryOutput> {
@@ -67,7 +78,7 @@ pub(crate) async fn summarize_session(
     }
 
     let tool_calls = sessions.session_tool_calls(&request.session_id)?;
-    let summary = llm
+    let summary = model_client
         .chat(ChatRequest {
             model: config.model.clone(),
             messages: vec![
@@ -81,8 +92,8 @@ pub(crate) async fn summarize_session(
         })
         .await?;
 
-    let proposal_id = wiki
-        .add_note(NoteInput {
+    let proposal_id = memory
+        .propose_note(MemoryNoteInput {
             title: format!("Session summary: {}", request.session_id),
             body: summary.content,
             kind: "note".to_string(),

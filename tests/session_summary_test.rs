@@ -9,9 +9,9 @@ use serde_json::json;
 use std::path::PathBuf;
 
 #[tokio::test]
-async fn summarize_session_writes_proposal_first_wiki_note() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+async fn summarize_session_writes_proposal_first_memory_note() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let session_id = sessions.create_session("runtime design").expect("session");
     sessions
@@ -35,7 +35,7 @@ async fn summarize_session_writes_proposal_first_wiki_note() {
         .record_tool_call_failed(&tool_call_id, "docker daemon unavailable")
         .expect("failed tool call");
 
-    let completion = llm.mock(|when, then| {
+    let completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Summarize this Loka session")
@@ -52,7 +52,7 @@ async fn summarize_session_writes_proposal_first_wiki_note() {
             }));
     });
 
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST).path("/api/notes").json_body(json!({
             "title": format!("Session summary: {session_id}"),
             "body": "- Runtime plan: Docker first, then SSH and cloud VM.",
@@ -70,7 +70,7 @@ async fn summarize_session_writes_proposal_first_wiki_note() {
             }));
     });
 
-    let engine = SessionSummaryEngine::new(app_config(&llm, &wiki), sessions);
+    let engine = SessionSummaryEngine::new(app_config(&model_client, &memory), sessions);
     let output = engine
         .summarize(SessionSummaryRequest {
             session_id: session_id.clone(),
@@ -91,24 +91,24 @@ async fn summarize_session_writes_proposal_first_wiki_note() {
 
 #[tokio::test]
 async fn summarize_session_skips_short_sessions() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let session_id = sessions.create_session("short").expect("session");
     sessions
         .append_turn(&session_id, Role::User, "hello")
         .expect("turn");
 
-    let llm_call = llm.mock(|when, then| {
+    let model_client_call = model_client.mock(|when, then| {
         when.method(POST).path("/v1/chat/completions");
         then.status(500);
     });
-    let wiki_call = wiki.mock(|when, then| {
+    let memory_call = memory.mock(|when, then| {
         when.method(POST).path("/api/notes");
         then.status(500);
     });
 
-    let engine = SessionSummaryEngine::new(app_config(&llm, &wiki), sessions);
+    let engine = SessionSummaryEngine::new(app_config(&model_client, &memory), sessions);
     let output = engine
         .summarize(SessionSummaryRequest {
             session_id,
@@ -118,18 +118,18 @@ async fn summarize_session_skips_short_sessions() {
         .expect("summary");
 
     assert_eq!(output, SessionSummaryOutput::TooShort { turn_count: 1 });
-    assert_eq!(llm_call.calls(), 0);
-    assert_eq!(wiki_call.calls(), 0);
+    assert_eq!(model_client_call.calls(), 0);
+    assert_eq!(memory_call.calls(), 0);
 }
 
-fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
     AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

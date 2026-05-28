@@ -6,8 +6,9 @@ use loka_agent::gateway::run_telegram_gateway;
 use loka_agent::learning::{
     LearnSessionOutput, LearnSessionRequest, LearningEngine, pending_learning_proposals,
 };
-use loka_agent::llm::{ChatRequest, LlmClient};
+use loka_agent::memory::MemoryClient;
 use loka_agent::messages::Message;
+use loka_agent::model::{ChatRequest, ModelClient};
 use loka_agent::multi_agent::{
     AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, WorkerSpec,
 };
@@ -26,7 +27,6 @@ use loka_agent::skill_creation::{
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
 use loka_agent::tools::ToolRegistry;
 use loka_agent::tui::{TuiApp, run_tui};
-use loka_agent::wiki::WikiClient;
 use std::fmt;
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -46,7 +46,7 @@ enum Command {
     Ask {
         #[arg(help = "Question or instruction to send to the agent")]
         prompt: String,
-        #[arg(long, help = "Inject relevant personal-wiki context before answering")]
+        #[arg(long, help = "Inject relevant memory context before answering")]
         recall: bool,
         #[arg(long, help = "Print assistant output as streaming deltas arrive")]
         stream: bool,
@@ -57,7 +57,7 @@ enum Command {
     },
     #[command(about = "chat with the agent in one persisted session")]
     Chat {
-        #[arg(long, help = "Inject relevant personal-wiki context before each turn")]
+        #[arg(long, help = "Inject relevant memory context before each turn")]
         recall: bool,
         #[arg(long = "message", help = "Message to send; repeat for scripted chats")]
         messages: Vec<String>,
@@ -101,7 +101,7 @@ enum Command {
         workers: Vec<WorkerProfileArg>,
         #[arg(
             long,
-            help = "Inject shared personal-wiki memory into the supervisor and workers"
+            help = "Inject shared memory context into the supervisor and workers"
         )]
         recall: bool,
         #[arg(
@@ -278,7 +278,7 @@ enum GatewayCommand {
         path: String,
         #[arg(long, help = "Telegram bot token; defaults to ~/.loka/config.toml")]
         token: Option<String>,
-        #[arg(long, help = "Inject personal-wiki recall before responding")]
+        #[arg(long, help = "Inject memory recall before responding")]
         recall: bool,
     },
 }
@@ -631,8 +631,8 @@ async fn handle_learn(command: LearnCommand) -> Result<()> {
             }
         }
         LearnCommand::Review { limit } => {
-            let wiki = WikiClient::new(AppConfig::wiki_base_url_from_env()?);
-            for proposal in pending_learning_proposals(&wiki, limit).await? {
+            let memory = MemoryClient::new(AppConfig::memory_base_url_from_env()?);
+            for proposal in pending_learning_proposals(&memory, limit).await? {
                 println!(
                     "{}\t{}\t{}",
                     proposal.id,
@@ -741,11 +741,11 @@ async fn handle_skills_propose_from_session(session_id: String) -> Result<()> {
     {
         ProposeSkillFromSessionOutput::ProposalCreated {
             skill,
-            wiki_proposal_id,
+            memory_proposal_id,
         } => {
             println!(
-                "proposed skill {}\twiki proposal {}",
-                skill.id, wiki_proposal_id
+                "proposed skill {}\tmemory proposal {}",
+                skill.id, memory_proposal_id
             );
         }
         ProposeSkillFromSessionOutput::NoReusableWorkflow => {
@@ -774,8 +774,12 @@ async fn handle_skills_run(id: &str, input: String) -> Result<()> {
         anyhow::bail!("skill {id} is not enabled");
     }
 
-    let llm = LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key);
-    let output = llm
+    let model_client = ModelClient::with_protocol(
+        &config.model_base_url,
+        config.model_api_key,
+        config.model_protocol,
+    );
+    let output = model_client
         .chat(ChatRequest {
             model: config.model,
             messages: vec![
@@ -959,7 +963,7 @@ fn default_worker_spec(profile: AgentProfile, objective: &str, timeout_seconds: 
             profile,
             objective: objective.to_string(),
             output_format: "supervisor synthesis notes".to_string(),
-            tools_allowed: vec!["session_search".to_string(), "wiki_rag".to_string()],
+            tools_allowed: vec!["session_search".to_string(), "memory_search".to_string()],
             max_iterations: 3,
             max_tokens: 2_000,
             timeout_seconds,
@@ -969,7 +973,7 @@ fn default_worker_spec(profile: AgentProfile, objective: &str, timeout_seconds: 
             profile,
             objective: format!("Create an execution plan for: {objective}"),
             output_format: "concise plan with sequencing, dependencies, and risks".to_string(),
-            tools_allowed: vec!["session_search".to_string(), "wiki_rag".to_string()],
+            tools_allowed: vec!["session_search".to_string(), "memory_search".to_string()],
             max_iterations: 4,
             max_tokens: 3_000,
             timeout_seconds,
@@ -982,7 +986,7 @@ fn default_worker_spec(profile: AgentProfile, objective: &str, timeout_seconds: 
             ),
             output_format: "research findings with sources or explicit uncertainty".to_string(),
             tools_allowed: vec![
-                "wiki_rag".to_string(),
+                "memory_search".to_string(),
                 "session_search".to_string(),
                 "read_file".to_string(),
                 "search_files".to_string(),

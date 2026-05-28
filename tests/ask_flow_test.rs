@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
 
-    wiki.mock(|when, then| {
+    memory.mock(|when, then| {
         when.method(POST).path("/api/rag").json_body(json!({
             "query": "what next",
             "limit": 6,
@@ -22,11 +22,11 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
             .header("content-type", "application/json")
             .json_body(json!({
                 "mode": "fts",
-                "markdown": "# Wiki Context\n- build the Rust platform spine"
+                "markdown": "# Memory Context\n- build the Rust platform spine"
             }));
     });
 
-    let completion = llm.mock(|when, then| {
+    let completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .header("authorization", "Bearer sk-test")
@@ -47,12 +47,12 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
     });
 
     let agent = Agent::new(AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
@@ -72,16 +72,16 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
 }
 
 #[tokio::test]
-async fn ask_without_recall_does_not_call_personal_wiki() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+async fn ask_without_recall_does_not_call_memory_api() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
 
-    let wiki_rag = wiki.mock(|when, then| {
+    let memory_search = memory.mock(|when, then| {
         when.method(POST).path("/api/rag");
         then.status(500);
     });
 
-    llm.mock(|when, then| {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("# Loka Identity")
@@ -100,12 +100,12 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
     });
 
     let agent = Agent::new(AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
@@ -120,18 +120,18 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
         .await
         .expect("ask should succeed");
 
-    assert_eq!(wiki_rag.calls(), 0);
+    assert_eq!(memory_search.calls(), 0);
     assert_eq!(answer.answer, "Answer without recall.");
 }
 
 #[tokio::test]
 async fn ask_with_session_store_persists_user_and_assistant_turns() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let tempdir = tempfile::tempdir().expect("tempdir");
     let sessions = SessionStore::open(tempdir.path()).expect("session store");
 
-    llm.mock(|when, then| {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("persist this");
@@ -147,12 +147,12 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
 
     let agent = Agent::with_session_store(
         AppConfig {
-            pengepul_base_url: llm.base_url(),
-            pengepul_api_key: "sk-test".to_string(),
-            wiki_base_url: wiki.base_url(),
+            model_base_url: model_client.base_url(),
+            model_api_key: "sk-test".to_string(),
+            memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
-            provider_id: "pengepul".to_string(),
+            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -185,12 +185,12 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
 
 #[tokio::test]
 async fn ask_stream_persists_accumulated_assistant_answer() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let tempdir = tempfile::tempdir().expect("tempdir");
     let sessions = SessionStore::open(tempdir.path()).expect("sessions");
 
-    llm.mock(|when, then| {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("\"stream\":true")
@@ -207,12 +207,12 @@ async fn ask_stream_persists_accumulated_assistant_answer() {
 
     let agent = Agent::with_session_store(
         AppConfig {
-            pengepul_base_url: llm.base_url(),
-            pengepul_api_key: "sk-test".to_string(),
-            wiki_base_url: wiki.base_url(),
+            model_base_url: model_client.base_url(),
+            model_api_key: "sk-test".to_string(),
+            memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
-            provider_id: "pengepul".to_string(),
+            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -249,8 +249,8 @@ async fn ask_stream_persists_accumulated_assistant_answer() {
 
 #[tokio::test]
 async fn ask_injects_enabled_matching_skill_context() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let skills = SkillStore::in_memory().expect("skills");
     let skill = skills
@@ -265,7 +265,7 @@ async fn ask_injects_enabled_matching_skill_context() {
         .expect("propose");
     skills.enable(&skill.id).expect("enable");
 
-    let completion = llm.mock(|when, then| {
+    let completion = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Enabled skill available")
@@ -283,12 +283,12 @@ async fn ask_injects_enabled_matching_skill_context() {
 
     let agent = Agent::with_stores(
         AppConfig {
-            pengepul_base_url: llm.base_url(),
-            pengepul_api_key: "sk-test".to_string(),
-            wiki_base_url: wiki.base_url(),
+            model_base_url: model_client.base_url(),
+            model_api_key: "sk-test".to_string(),
+            memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
-            provider_id: "pengepul".to_string(),
+            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },

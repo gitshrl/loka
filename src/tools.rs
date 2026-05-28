@@ -108,8 +108,8 @@ fn built_in_definitions() -> Vec<ToolDefinition> {
             ),
         },
         ToolDefinition {
-            name: "wiki_rag",
-            description: "Fetch relevant memory context from personal-wiki.",
+            name: "memory_search",
+            description: "Fetch relevant memory context from memory API.",
             access: ToolAccess::Read,
             input_schema: object_schema(
                 vec![
@@ -121,8 +121,8 @@ fn built_in_definitions() -> Vec<ToolDefinition> {
             ),
         },
         ToolDefinition {
-            name: "wiki_add_note",
-            description: "Create a proposal-first memory note in personal-wiki.",
+            name: "memory_propose",
+            description: "Create a proposal-first memory note in memory API.",
             access: ToolAccess::Write,
             input_schema: object_schema(
                 vec![

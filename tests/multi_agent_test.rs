@@ -10,17 +10,17 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn multi_agent_run_persists_isolated_worker_sessions_and_synthesizes() {
-    let llm = MockServer::start();
-    let wiki = MockServer::start();
+    let model_client = MockServer::start();
+    let memory = MockServer::start();
     let state = tempfile::tempdir().expect("state");
     let sessions = SessionStore::open(state.path()).expect("sessions");
     let tasks = TaskGraphStore::open(state.path()).expect("tasks");
 
-    let planner = mock_planner(&llm);
-    let reviewer = mock_reviewer(&llm);
-    let supervisor = mock_supervisor(&llm);
+    let planner = mock_planner(&model_client);
+    let reviewer = mock_reviewer(&model_client);
+    let supervisor = mock_supervisor(&model_client);
 
-    let runtime = MultiAgentRuntime::new(app_config(&llm, &wiki), sessions, tasks);
+    let runtime = MultiAgentRuntime::new(app_config(&model_client, &memory), sessions, tasks);
 
     let output = runtime
         .run(two_worker_request())
@@ -49,11 +49,11 @@ async fn multi_agent_run_persists_isolated_worker_sessions_and_synthesizes() {
 
 #[tokio::test]
 async fn multi_agent_run_requires_explicit_worker_contracts() {
-    let llm = MockServer::start();
-    let wiki = MockServer::start();
+    let model_client = MockServer::start();
+    let memory = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let tasks = TaskGraphStore::in_memory().expect("tasks");
-    let runtime = MultiAgentRuntime::new(app_config(&llm, &wiki), sessions, tasks);
+    let runtime = MultiAgentRuntime::new(app_config(&model_client, &memory), sessions, tasks);
 
     let error = runtime
         .run(MultiAgentRunRequest {
@@ -79,13 +79,13 @@ async fn multi_agent_run_requires_explicit_worker_contracts() {
 
 #[tokio::test]
 async fn multi_agent_worker_over_token_budget_is_failed_and_persisted() {
-    let llm = MockServer::start();
-    let wiki = MockServer::start();
+    let model_client = MockServer::start();
+    let memory = MockServer::start();
     let state = tempfile::tempdir().expect("state");
     let sessions = SessionStore::open(state.path()).expect("sessions");
     let tasks = TaskGraphStore::open(state.path()).expect("tasks");
 
-    let worker = llm.mock(|when, then| {
+    let worker = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Worker profile: planner")
@@ -100,7 +100,7 @@ async fn multi_agent_worker_over_token_budget_is_failed_and_persisted() {
                 "usage": { "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10 }
             }));
     });
-    let supervisor = llm.mock(|when, then| {
+    let supervisor = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("failed:")
@@ -116,7 +116,7 @@ async fn multi_agent_worker_over_token_budget_is_failed_and_persisted() {
             }));
     });
 
-    let runtime = MultiAgentRuntime::new(app_config(&llm, &wiki), sessions, tasks);
+    let runtime = MultiAgentRuntime::new(app_config(&model_client, &memory), sessions, tasks);
     let output = runtime
         .run(MultiAgentRunRequest {
             objective: "budgeted run".to_string(),
@@ -161,21 +161,21 @@ async fn multi_agent_worker_over_token_budget_is_failed_and_persisted() {
     assert_eq!(run.tasks[0].tokens_used, 10);
 }
 
-fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
     AppConfig {
-        pengepul_base_url: llm.base_url(),
-        pengepul_api_key: "sk-test".to_string(),
-        wiki_base_url: wiki.base_url(),
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
-        provider_id: "pengepul".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }
 }
 
-fn mock_planner(llm: &MockServer) -> Mock<'_> {
-    llm.mock(|when, then| {
+fn mock_planner(model_client: &MockServer) -> Mock<'_> {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Worker profile: planner")
@@ -193,8 +193,8 @@ fn mock_planner(llm: &MockServer) -> Mock<'_> {
     })
 }
 
-fn mock_reviewer(llm: &MockServer) -> Mock<'_> {
-    llm.mock(|when, then| {
+fn mock_reviewer(model_client: &MockServer) -> Mock<'_> {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Worker profile: reviewer")
@@ -211,8 +211,8 @@ fn mock_reviewer(llm: &MockServer) -> Mock<'_> {
     })
 }
 
-fn mock_supervisor(llm: &MockServer) -> Mock<'_> {
-    llm.mock(|when, then| {
+fn mock_supervisor(model_client: &MockServer) -> Mock<'_> {
+    model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Supervisor synthesis")

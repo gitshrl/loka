@@ -13,10 +13,10 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::MemoryClient;
 use crate::messages::{Message, Role};
+use crate::model::{ChatRequest, ModelClient};
 use crate::session::SessionStore;
-use crate::wiki::WikiClient;
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
@@ -444,8 +444,8 @@ impl TaskGraphStore {
 #[derive(Debug)]
 pub struct MultiAgentRuntime {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
     sessions: SessionStore,
     tasks: TaskGraphStore,
 }
@@ -454,11 +454,12 @@ impl MultiAgentRuntime {
     #[must_use]
     pub fn new(config: AppConfig, sessions: SessionStore, tasks: TaskGraphStore) -> Self {
         Self {
-            llm: LlmClient::new(
-                config.pengepul_base_url.clone(),
-                config.pengepul_api_key.clone(),
+            model_client: ModelClient::with_protocol(
+                config.model_base_url.clone(),
+                config.model_api_key.clone(),
+                config.model_protocol,
             ),
-            wiki: WikiClient::new(config.wiki_base_url.clone()),
+            memory: MemoryClient::new(config.memory_base_url.clone()),
             config,
             sessions,
             tasks,
@@ -476,8 +477,8 @@ impl MultiAgentRuntime {
 
         let shared_memory = if request.recall {
             let memory = self
-                .wiki
-                .rag(&request.objective, RECALL_LIMIT, RECALL_DEPTH)
+                .memory
+                .recall(&request.objective, RECALL_LIMIT, RECALL_DEPTH)
                 .await?;
             Some(memory.markdown.trim().to_string()).filter(|memory| !memory.is_empty())
         } else {
@@ -553,10 +554,10 @@ impl MultiAgentRuntime {
         shared_memory: Option<String>,
     ) -> Result<Vec<WorkerRunOutput>> {
         let jobs = calls.into_iter().map(|call| {
-            let llm = self.llm.clone();
+            let model_client = self.model_client.clone();
             let model = self.config.model.clone();
             let shared_memory = shared_memory.clone();
-            async move { execute_worker(call, llm, model, shared_memory).await }
+            async move { execute_worker(call, model_client, model, shared_memory).await }
         });
 
         let executions = join_all(jobs).await;
@@ -615,7 +616,7 @@ impl MultiAgentRuntime {
         )));
 
         let output = self
-            .llm
+            .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages,
@@ -654,13 +655,17 @@ struct ModelSummary {
 
 async fn execute_worker(
     call: WorkerCall,
-    llm: LlmClient,
+    model_client: ModelClient,
     model: String,
     shared_memory: Option<String>,
 ) -> WorkerExecution {
     let timeout_duration = Duration::from_secs(call.spec.timeout_seconds);
     let messages = worker_messages(&call.spec, shared_memory);
-    let result = timeout(timeout_duration, llm.chat(ChatRequest { model, messages })).await;
+    let result = timeout(
+        timeout_duration,
+        model_client.chat(ChatRequest { model, messages }),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {

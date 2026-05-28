@@ -1,11 +1,11 @@
 use anyhow::{Context, Result, anyhow};
 
 use crate::config::AppConfig;
-use crate::llm::{ChatRequest, LlmClient};
+use crate::memory::{MemoryClient, MemoryNoteInput};
 use crate::messages::Message;
+use crate::model::{ChatRequest, ModelClient};
 use crate::session::{SessionStore, SessionTurn};
 use crate::skills::{Skill, SkillDraft, SkillStore, validate_draft};
-use crate::wiki::{NoteInput, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposeSkillFromSessionRequest {
@@ -16,7 +16,7 @@ pub struct ProposeSkillFromSessionRequest {
 pub enum ProposeSkillFromSessionOutput {
     ProposalCreated {
         skill: Box<Skill>,
-        wiki_proposal_id: String,
+        memory_proposal_id: String,
     },
     NoReusableWorkflow,
 }
@@ -24,8 +24,8 @@ pub enum ProposeSkillFromSessionOutput {
 #[derive(Debug)]
 pub struct SkillCreationEngine {
     config: AppConfig,
-    llm: LlmClient,
-    wiki: WikiClient,
+    model_client: ModelClient,
+    memory: MemoryClient,
     sessions: SessionStore,
     skills: SkillStore,
 }
@@ -34,8 +34,12 @@ impl SkillCreationEngine {
     #[must_use]
     pub fn new(config: AppConfig, sessions: SessionStore, skills: SkillStore) -> Self {
         Self {
-            llm: LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key.clone()),
-            wiki: WikiClient::new(&config.wiki_base_url),
+            model_client: ModelClient::with_protocol(
+                &config.model_base_url,
+                config.model_api_key.clone(),
+                config.model_protocol,
+            ),
+            memory: MemoryClient::new(&config.memory_base_url),
             config,
             sessions,
             skills,
@@ -47,7 +51,7 @@ impl SkillCreationEngine {
     /// # Errors
     ///
     /// Returns an error when the session is empty, model extraction fails, model output is invalid,
-    /// `personal-wiki` rejects the proposal-first note, or the local skill store rejects the draft.
+    /// `memory API` rejects the proposal-first note, or the local skill store rejects the draft.
     pub async fn propose_from_session(
         &self,
         request: ProposeSkillFromSessionRequest,
@@ -58,7 +62,7 @@ impl SkillCreationEngine {
         }
 
         let extraction = self
-            .llm
+            .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages: vec![
@@ -76,9 +80,9 @@ impl SkillCreationEngine {
         };
 
         validate_draft(&draft)?;
-        let wiki_proposal_id = self
-            .wiki
-            .add_note(NoteInput {
+        let memory_proposal_id = self
+            .memory
+            .propose_note(MemoryNoteInput {
                 title: format!("Skill proposal: {}", draft.name.trim()),
                 body: format_skill_proposal_note(&request.session_id, &draft),
                 kind: "note".to_string(),
@@ -94,7 +98,7 @@ impl SkillCreationEngine {
 
         Ok(ProposeSkillFromSessionOutput::ProposalCreated {
             skill: Box::new(skill),
-            wiki_proposal_id,
+            memory_proposal_id,
         })
     }
 }

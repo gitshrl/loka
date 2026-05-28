@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn learn_session_extracts_durable_note_and_writes_proposal() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let session_id = sessions
         .create_session("agent architecture")
@@ -25,7 +25,7 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
         .append_turn(
             &session_id,
             Role::Assistant,
-            "Decision captured: Rust owns orchestration, memory stays in personal-wiki.",
+            "Decision captured: Rust owns orchestration, memory stays in memory API.",
         )
         .expect("assistant turn");
     let tool_call_id = sessions
@@ -35,7 +35,7 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
         .record_tool_call_failed(&tool_call_id, "clippy failed on unwrap")
         .expect("failed tool call");
 
-    let extraction = llm.mock(|when, then| {
+    let extraction = model_client.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("We decided Loka should use Rust")
@@ -51,7 +51,7 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
             }));
     });
 
-    let proposal = wiki.mock(|when, then| {
+    let proposal = memory.mock(|when, then| {
         when.method(POST).path("/api/notes").json_body(json!({
             "title": format!("Session learning: {session_id}"),
             "body": "- Decision: Loka uses Rust as the control plane.",
@@ -71,12 +71,12 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
 
     let learning = LearningEngine::new(
         AppConfig {
-            pengepul_base_url: llm.base_url(),
-            pengepul_api_key: "sk-test".to_string(),
-            wiki_base_url: wiki.base_url(),
+            model_base_url: model_client.base_url(),
+            model_api_key: "sk-test".to_string(),
+            memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
-            provider_id: "pengepul".to_string(),
+            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -101,16 +101,16 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
 }
 
 #[tokio::test]
-async fn learn_session_skips_wiki_write_when_model_returns_none() {
-    let wiki = MockServer::start();
-    let llm = MockServer::start();
+async fn learn_session_skips_memory_write_when_model_returns_none() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
     let sessions = SessionStore::in_memory().expect("sessions");
     let session_id = sessions.create_session("casual chat").expect("session");
     sessions
         .append_turn(&session_id, Role::User, "hello")
         .expect("turn");
 
-    llm.mock(|when, then| {
+    model_client.mock(|when, then| {
         when.method(POST).path("/v1/chat/completions");
         then.status(200)
             .header("content-type", "application/json")
@@ -121,19 +121,19 @@ async fn learn_session_skips_wiki_write_when_model_returns_none() {
             }));
     });
 
-    let note = wiki.mock(|when, then| {
+    let note = memory.mock(|when, then| {
         when.method(POST).path("/api/notes");
         then.status(500);
     });
 
     let learning = LearningEngine::new(
         AppConfig {
-            pengepul_base_url: llm.base_url(),
-            pengepul_api_key: "sk-test".to_string(),
-            wiki_base_url: wiki.base_url(),
+            model_base_url: model_client.base_url(),
+            model_api_key: "sk-test".to_string(),
+            memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
-            provider_id: "pengepul".to_string(),
+            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },

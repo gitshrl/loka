@@ -1,30 +1,68 @@
 use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde::Deserialize;
+use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelProtocol {
+    OpenAiCompatible,
+    AnthropicCompatible,
+}
+
+impl ModelProtocol {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "openai-compatible",
+            Self::AnthropicCompatible => "anthropic-compatible",
+        }
+    }
+}
+
+impl fmt::Display for ModelProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ModelProtocol {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim() {
+            "openai-compatible" => Ok(Self::OpenAiCompatible),
+            "anthropic-compatible" => Ok(Self::AnthropicCompatible),
+            other => Err(anyhow!(
+                "LOKA_MODEL_PROTOCOL must be openai-compatible or anthropic-compatible, got {other}"
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
-    pub pengepul_base_url: String,
-    pub pengepul_api_key: String,
-    pub wiki_base_url: String,
+    pub model_base_url: String,
+    pub model_api_key: String,
+    pub memory_base_url: String,
     pub model: String,
     pub agent_id: String,
-    pub provider_id: String,
+    pub model_protocol: ModelProtocol,
     pub working_dir: PathBuf,
     pub state_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct FileConfig {
-    pengepul_base_url: Option<String>,
-    pengepul_api_key: Option<String>,
-    wiki_base_url: Option<String>,
+    model_base_url: Option<String>,
+    model_api_key: Option<String>,
+    memory_base_url: Option<String>,
     model: Option<String>,
     agent_id: Option<String>,
-    provider_id: Option<String>,
+    model_protocol: Option<String>,
     working_dir: Option<String>,
     state_dir: Option<String>,
     telegram_bot_token: Option<String>,
@@ -58,32 +96,32 @@ impl AppConfig {
         )
     }
 
-    /// Loads the wiki base URL from environment and `~/.loka/config.toml` without requiring
+    /// Loads the memory base URL from environment and `~/.loka/config.toml` without requiring
     /// provider credentials.
     ///
     /// # Errors
     ///
     /// Returns an error when the config file exists but cannot be read or parsed, or when the
-    /// wiki URL is invalid.
-    pub fn wiki_base_url_from_env() -> Result<String> {
-        Self::wiki_base_url_from_env_map(|key| std::env::var(key).ok())
+    /// memory URL is invalid.
+    pub fn memory_base_url_from_env() -> Result<String> {
+        Self::memory_base_url_from_env_map(|key| std::env::var(key).ok())
     }
 
-    /// Loads the wiki base URL from a caller-provided key/value source and optional config file.
+    /// Loads the memory base URL from a caller-provided key/value source and optional config file.
     ///
     /// # Errors
     ///
     /// Returns an error when the config file exists but cannot be read or parsed, or when the
-    /// wiki URL is invalid.
-    pub fn wiki_base_url_from_env_map<F>(get: F) -> Result<String>
+    /// memory URL is invalid.
+    pub fn memory_base_url_from_env_map<F>(get: F) -> Result<String>
     where
         F: Fn(&str) -> Option<String>,
     {
         let file = load_file_config(&config_file_path(&get))?;
         get_optional_url(
             &get,
-            "LOKA_WIKI_BASE_URL",
-            file.wiki_base_url.as_deref(),
+            "LOKA_MEMORY_BASE_URL",
+            file.memory_base_url.as_deref(),
             "http://127.0.0.1:4321",
         )
     }
@@ -130,25 +168,22 @@ impl AppConfig {
         F: Fn(&str) -> Option<String>,
     {
         let file = load_file_config(&config_file_path(&get))?;
-        let pengepul_api_key = get_required(
-            &get,
-            "LOKA_PENGEPUL_API_KEY",
-            file.pengepul_api_key.as_deref(),
-        )?;
+        let model_api_key =
+            get_required(&get, "LOKA_MODEL_API_KEY", file.model_api_key.as_deref())?;
         let working_dir = get_working_dir(&get, file.working_dir.as_deref())?;
 
         Ok(Self {
-            pengepul_base_url: get_optional_url(
+            model_base_url: get_optional_url(
                 &get,
-                "LOKA_PENGEPUL_BASE_URL",
-                file.pengepul_base_url.as_deref(),
+                "LOKA_MODEL_BASE_URL",
+                file.model_base_url.as_deref(),
                 "http://127.0.0.1:8317",
             )?,
-            pengepul_api_key,
-            wiki_base_url: get_optional_url(
+            model_api_key,
+            memory_base_url: get_optional_url(
                 &get,
-                "LOKA_WIKI_BASE_URL",
-                file.wiki_base_url.as_deref(),
+                "LOKA_MEMORY_BASE_URL",
+                file.memory_base_url.as_deref(),
                 "http://127.0.0.1:4321",
             )?,
             model: get_optional(&get, "LOKA_MODEL", file.model.as_deref(), "gpt-5.5"),
@@ -158,16 +193,24 @@ impl AppConfig {
                 file.agent_id.as_deref(),
                 "loka-agent",
             ),
-            provider_id: get_optional(
-                &get,
-                "LOKA_PROVIDER_ID",
-                file.provider_id.as_deref(),
-                "pengepul",
-            ),
+            model_protocol: get_model_protocol(&get, file.model_protocol.as_deref())?,
             working_dir,
             state_dir: get_state_dir(&get, &file),
         })
     }
+}
+
+fn get_model_protocol<F>(get: &F, file_value: Option<&str>) -> Result<ModelProtocol>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    get_optional(
+        get,
+        "LOKA_MODEL_PROTOCOL",
+        file_value,
+        ModelProtocol::OpenAiCompatible.as_str(),
+    )
+    .parse()
 }
 
 fn get_required<F>(get: &F, key: &str, file_value: Option<&str>) -> Result<String>

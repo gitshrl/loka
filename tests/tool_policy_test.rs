@@ -15,13 +15,13 @@ fn registry_contains_core_harness_tools() {
         vec![
             "git_status",
             "learn_session",
+            "memory_propose",
+            "memory_search",
             "read_file",
             "search_files",
             "session_list",
             "session_search",
             "shell",
-            "wiki_add_note",
-            "wiki_rag",
         ]
     );
 
@@ -47,7 +47,7 @@ fn approval_policy_auto_allows_read_tools_and_asks_for_writes() {
         ApprovalDecision::Allow
     );
     assert_eq!(
-        policy.evaluate(&registry, "wiki_add_note"),
+        policy.evaluate(&registry, "memory_propose"),
         ApprovalDecision::Ask
     );
     assert_eq!(policy.evaluate(&registry, "shell"), ApprovalDecision::Ask);

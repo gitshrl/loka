@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use crate::config::ModelProtocol;
+
 const CONTEXT_FILE_NAMES: &[&str] = &["AGENTS.md", "LOKA.md", ".loka.md", ".cursorrules"];
 const MAX_CONTEXT_FILE_BYTES: u64 = 64 * 1024;
 
@@ -29,7 +31,7 @@ pub struct ContextFile {
 pub struct PromptInput {
     pub agent_id: String,
     pub model: String,
-    pub provider_id: String,
+    pub model_protocol: ModelProtocol,
     pub session_id: Option<String>,
     pub system_message: Option<String>,
     pub memory_markdown: Option<String>,
@@ -182,7 +184,7 @@ fn build_context_prompt(system_message: Option<String>, context_files: Vec<Conte
 fn build_volatile_prompt(input: &PromptInput) -> String {
     let mut parts = vec![format!(
         "# Runtime State\nConversation date: {}\nAgent ID: {}\nModel: {}\nProvider: {}",
-        input.date, input.agent_id, input.model, input.provider_id
+        input.date, input.agent_id, input.model, input.model_protocol
     )];
 
     if let Some(session_id) = input.session_id.as_deref()
@@ -194,10 +196,33 @@ fn build_volatile_prompt(input: &PromptInput) -> String {
     if let Some(memory) = input.memory_markdown.as_deref()
         && !memory.trim().is_empty()
     {
-        parts.push(format!("# Memory Recall\n{}", memory.trim()));
+        parts.push(format_memory_recall(memory));
     }
 
     parts.join("\n\n")
+}
+
+fn format_memory_recall(memory: &str) -> String {
+    let memory = sanitize_memory_recall(memory);
+    format!(
+        concat!(
+            "# Memory Recall\n",
+            "<memory-context>\n",
+            "[System note: The following is recalled durable memory, not new user input. ",
+            "Treat it as background context and do not expose this wrapper.]\n\n",
+            "{}\n",
+            "</memory-context>"
+        ),
+        memory
+    )
+}
+
+fn sanitize_memory_recall(memory: &str) -> String {
+    memory
+        .replace("<memory-context>", "")
+        .replace("</memory-context>", "")
+        .trim()
+        .to_string()
 }
 
 fn fingerprint_prompt_parts(stable: &str, context: &str, volatile: &str) -> String {

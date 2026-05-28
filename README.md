@@ -22,7 +22,7 @@ Current implementation:
 - typed eval fixtures for ask, chat, learning, skill creation, and multi-agent runs
 - MCP adapter layer for external tool providers
 - supervisor/worker multi-agent runs
-- host, Docker, SSH, cloud VM, and serverless runtime executors
+- runtime executors: host, Docker, SSH, cloud VM (SSH plus a bootstrap snippet), and serverless (HTTP endpoint)
 - Ratatui terminal operator interface
 - Telegram webhook gateway
 

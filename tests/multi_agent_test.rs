@@ -77,6 +77,90 @@ async fn multi_agent_run_requires_explicit_worker_contracts() {
     assert!(error.to_string().contains("output format"));
 }
 
+#[tokio::test]
+async fn multi_agent_worker_over_token_budget_is_failed_and_persisted() {
+    let llm = MockServer::start();
+    let wiki = MockServer::start();
+    let state = tempfile::tempdir().expect("state");
+    let sessions = SessionStore::open(state.path()).expect("sessions");
+    let tasks = TaskGraphStore::open(state.path()).expect("tasks");
+
+    let worker = llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("Worker profile: planner")
+            .body_includes("Max tokens: 5");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "This worker spent too much." } }
+                ],
+                "usage": { "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10 }
+            }));
+    });
+    let supervisor = llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("failed:")
+            .body_includes("exceeded token budget");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "Supervisor handled worker budget failure." } }
+                ],
+                "usage": { "prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6 }
+            }));
+    });
+
+    let runtime = MultiAgentRuntime::new(app_config(&llm, &wiki), sessions, tasks);
+    let output = runtime
+        .run(MultiAgentRunRequest {
+            objective: "budgeted run".to_string(),
+            recall: false,
+            max_workers: 1,
+            workers: vec![WorkerSpec {
+                profile: AgentProfile::Planner,
+                objective: "plan within budget".to_string(),
+                output_format: "short answer".to_string(),
+                tools_allowed: vec!["session_search".to_string()],
+                max_iterations: 1,
+                max_tokens: 5,
+                timeout_seconds: 10,
+                justification: "planning should stay bounded".to_string(),
+            }],
+        })
+        .await
+        .expect("multi-agent run");
+
+    worker.assert();
+    supervisor.assert();
+    assert_eq!(
+        output.synthesis,
+        "Supervisor handled worker budget failure."
+    );
+    assert_eq!(output.total_tokens, 16);
+    assert_eq!(output.workers.len(), 1);
+    assert_eq!(output.workers[0].status, TaskStatus::Failed);
+    assert_eq!(output.workers[0].tokens_used, 10);
+    assert!(
+        output.workers[0]
+            .error
+            .as_deref()
+            .expect("error")
+            .contains("exceeded token budget")
+    );
+
+    let tasks = TaskGraphStore::open(state.path()).expect("tasks");
+    let run = tasks.run(&output.run_id).expect("run").expect("stored run");
+    assert_eq!(run.tasks.len(), 1);
+    assert_eq!(run.tasks[0].status, TaskStatus::Failed);
+    assert_eq!(run.tasks[0].tokens_used, 10);
+}
+
 fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
     AppConfig {
         pengepul_base_url: llm.base_url(),

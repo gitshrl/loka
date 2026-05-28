@@ -310,13 +310,19 @@ impl TaskGraphStore {
         Ok(())
     }
 
-    fn fail_task(&self, task_id: &str, error: &str) -> Result<()> {
+    fn fail_task(&self, task_id: &str, error: &str, tokens_used: u64) -> Result<()> {
         let now = now_rfc3339()?;
         self.conn.execute(
             "UPDATE agent_tasks
-             SET status = ?1, error = ?2, updated_at = ?3
-             WHERE id = ?4",
-            params![TaskStatus::Failed.as_str(), error, now, task_id],
+             SET status = ?1, error = ?2, tokens_used = ?3, updated_at = ?4
+             WHERE id = ?5",
+            params![
+                TaskStatus::Failed.as_str(),
+                error,
+                i64::try_from(tokens_used).context("token count exceeds i64")?,
+                now,
+                task_id
+            ],
         )?;
         Ok(())
     }
@@ -557,7 +563,10 @@ impl MultiAgentRuntime {
         let mut outputs = Vec::with_capacity(executions.len());
         for execution in executions {
             match &execution.error {
-                Some(error) => self.tasks.fail_task(&execution.task_id, error)?,
+                Some(error) => {
+                    self.tasks
+                        .fail_task(&execution.task_id, error, execution.tokens_used)?;
+                }
                 None => self.tasks.complete_task(
                     &execution.task_id,
                     &execution.summary,
@@ -654,14 +663,25 @@ async fn execute_worker(
     let result = timeout(timeout_duration, llm.chat(ChatRequest { model, messages })).await;
 
     match result {
-        Ok(Ok(output)) => WorkerExecution {
-            task_id: call.task_id,
-            profile: call.spec.profile,
-            session_id: call.session_id,
-            summary: output.content,
-            error: None,
-            tokens_used: output.usage.map_or(0, |usage| usage.total_tokens),
-        },
+        Ok(Ok(output)) => {
+            let tokens_used = output.usage.map_or(0, |usage| usage.total_tokens);
+            let error = if tokens_used > u64::from(call.spec.max_tokens) {
+                Some(format!(
+                    "{} worker exceeded token budget: used {} > max {}",
+                    call.spec.profile, tokens_used, call.spec.max_tokens
+                ))
+            } else {
+                None
+            };
+            WorkerExecution {
+                task_id: call.task_id,
+                profile: call.spec.profile,
+                session_id: call.session_id,
+                summary: output.content,
+                error,
+                tokens_used,
+            }
+        }
         Ok(Err(error)) => WorkerExecution {
             task_id: call.task_id,
             profile: call.spec.profile,

@@ -12,7 +12,7 @@ fn config_uses_development_service_defaults() {
 
     assert_eq!(config.pengepul_base_url, "http://127.0.0.1:8317");
     assert_eq!(config.wiki_base_url, "http://127.0.0.1:4321");
-    assert_eq!(config.model, "gpt-5");
+    assert_eq!(config.model, "gpt-5.5");
     assert_eq!(config.agent_id, "loka-agent");
     assert_eq!(config.provider_id, "pengepul");
     assert_eq!(config.pengepul_api_key, "sk-test");

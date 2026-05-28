@@ -145,6 +145,50 @@ impl Agent {
         })
     }
 
+    /// Answers a prompt with streaming deltas while persisting the final assistant text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when recall fails, session persistence fails, the model stream fails,
+    /// or the delta callback fails.
+    pub async fn ask_stream<F>(&self, request: AskRequest, on_delta: F) -> Result<AskOutput>
+    where
+        F: FnMut(&str) -> Result<()>,
+    {
+        let session_id = self.create_session(&request.prompt)?;
+        let prompt_session_id = request.session_id.clone().or_else(|| session_id.clone());
+        let system_prompt = self
+            .build_system_prompt(
+                &request.prompt,
+                request.recall,
+                prompt_session_id,
+                request.system_message,
+            )
+            .await?;
+        let mut transcript = Transcript::new();
+        transcript.push(Message::system(system_prompt));
+        transcript.push(Message::user(request.prompt.clone()));
+        self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
+
+        let response = self
+            .llm
+            .chat_stream(
+                ChatRequest {
+                    model: self.config.model.clone(),
+                    messages: transcript.into_messages(),
+                },
+                on_delta,
+            )
+            .await?;
+
+        self.append_turn(session_id.as_deref(), Role::Assistant, &response.content)?;
+
+        Ok(AskOutput {
+            answer: response.content,
+            session_id,
+        })
+    }
+
     /// Answers a prompt as the next turn in an existing persisted session.
     ///
     /// # Errors

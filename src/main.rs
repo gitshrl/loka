@@ -45,6 +45,8 @@ enum Command {
         prompt: String,
         #[arg(long, help = "Inject relevant personal-wiki context before answering")]
         recall: bool,
+        #[arg(long, help = "Print assistant output as streaming deltas arrive")]
+        stream: bool,
         #[arg(long, help = "Session id to expose in the prompt runtime state")]
         session_id: Option<String>,
         #[arg(long, help = "Additional caller system message for this request")]
@@ -366,9 +368,10 @@ async fn main() -> Result<()> {
         Command::Ask {
             prompt,
             recall,
+            stream,
             session_id,
             system_message,
-        } => handle_ask(prompt, recall, session_id, system_message).await?,
+        } => handle_ask(prompt, recall, stream, session_id, system_message).await?,
         Command::Chat { recall, messages } => handle_chat(recall, messages).await?,
         Command::Remember { title, body, tags } => handle_remember(title, body, tags).await?,
         Command::Sessions { command } => handle_sessions(command)?,
@@ -407,6 +410,7 @@ async fn main() -> Result<()> {
 async fn handle_ask(
     prompt: String,
     recall: bool,
+    stream: bool,
     session_id: Option<String>,
     system_message: Option<String>,
 ) -> Result<()> {
@@ -414,15 +418,34 @@ async fn handle_ask(
     let sessions = SessionStore::open(&config.state_dir)?;
     let skills = SkillStore::open(&config.state_dir)?;
     let agent = Agent::with_stores(config, sessions, skills);
-    let output = agent
-        .ask(AskRequest {
-            prompt,
-            recall,
-            session_id,
-            system_message,
-        })
-        .await?;
-    println!("{}", output.answer);
+    let request = AskRequest {
+        prompt,
+        recall,
+        session_id,
+        system_message,
+    };
+
+    if stream {
+        let mut stdout = io::stdout();
+        tokio::select! {
+            output = agent.ask_stream(request, |delta| {
+                stdout.write_all(delta.as_bytes())?;
+                stdout.flush()?;
+                Ok(())
+            }) => {
+                output?;
+                stdout.write_all(b"\n")?;
+                stdout.flush()?;
+            }
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                anyhow::bail!("interrupted");
+            }
+        }
+    } else {
+        let output = agent.ask(request).await?;
+        println!("{}", output.answer);
+    }
     Ok(())
 }
 

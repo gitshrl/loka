@@ -8,7 +8,7 @@ use std::path::PathBuf;
 fn prompt_orders_stable_context_then_volatile() {
     let input = PromptInput {
         agent_id: "loka-agent".to_string(),
-        model: "gpt-5".to_string(),
+        model: "gpt-5.5".to_string(),
         provider_id: "pengepul".to_string(),
         session_id: Some("session-1".to_string()),
         system_message: Some("Caller system message.".to_string()),
@@ -37,7 +37,7 @@ fn prompt_orders_stable_context_then_volatile() {
 fn prompt_is_deterministic_for_identical_input() {
     let input = PromptInput {
         agent_id: "loka-agent".to_string(),
-        model: "gpt-5".to_string(),
+        model: "gpt-5.5".to_string(),
         provider_id: "pengepul".to_string(),
         session_id: None,
         system_message: None,

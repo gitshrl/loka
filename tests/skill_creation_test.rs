@@ -145,7 +145,7 @@ fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
         pengepul_base_url: llm.base_url(),
         pengepul_api_key: "sk-test".to_string(),
         wiki_base_url: wiki.base_url(),
-        model: "gpt-5".to_string(),
+        model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         provider_id: "pengepul".to_string(),
         working_dir: PathBuf::from("/tmp"),

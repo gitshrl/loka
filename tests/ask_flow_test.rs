@@ -50,7 +50,7 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
         pengepul_base_url: llm.base_url(),
         pengepul_api_key: "sk-test".to_string(),
         wiki_base_url: wiki.base_url(),
-        model: "gpt-5".to_string(),
+        model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         provider_id: "pengepul".to_string(),
         working_dir: PathBuf::from("/tmp"),
@@ -103,7 +103,7 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
         pengepul_base_url: llm.base_url(),
         pengepul_api_key: "sk-test".to_string(),
         wiki_base_url: wiki.base_url(),
-        model: "gpt-5".to_string(),
+        model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         provider_id: "pengepul".to_string(),
         working_dir: PathBuf::from("/tmp"),
@@ -150,7 +150,7 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
             pengepul_base_url: llm.base_url(),
             pengepul_api_key: "sk-test".to_string(),
             wiki_base_url: wiki.base_url(),
-            model: "gpt-5".to_string(),
+            model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
             provider_id: "pengepul".to_string(),
             working_dir: PathBuf::from("/tmp"),
@@ -181,6 +181,70 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].session_id, session_id);
     assert_eq!(hits[0].content, "Persisted.");
+}
+
+#[tokio::test]
+async fn ask_stream_persists_accumulated_assistant_answer() {
+    let wiki = MockServer::start();
+    let llm = MockServer::start();
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let sessions = SessionStore::open(tempdir.path()).expect("sessions");
+
+    llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("\"stream\":true")
+            .body_includes("stream this");
+
+        then.status(200)
+            .header("content-type", "text/event-stream")
+            .body(concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"streamed\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"}}]}\n\n",
+                "data: [DONE]\n\n"
+            ));
+    });
+
+    let agent = Agent::with_session_store(
+        AppConfig {
+            pengepul_base_url: llm.base_url(),
+            pengepul_api_key: "sk-test".to_string(),
+            wiki_base_url: wiki.base_url(),
+            model: "gpt-5.5".to_string(),
+            agent_id: "loka-agent".to_string(),
+            provider_id: "pengepul".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            state_dir: PathBuf::from(".test-state"),
+        },
+        sessions,
+    );
+
+    let mut deltas = Vec::new();
+    let output = agent
+        .ask_stream(
+            AskRequest {
+                prompt: "stream this".to_string(),
+                recall: false,
+                session_id: None,
+                system_message: None,
+            },
+            |delta| {
+                deltas.push(delta.to_string());
+                Ok(())
+            },
+        )
+        .await
+        .expect("stream should succeed");
+
+    assert_eq!(deltas, vec!["streamed", " answer"]);
+    assert_eq!(output.answer, "streamed answer");
+    let session_id = output.session_id.expect("session id");
+    let hits = SessionStore::open(tempdir.path())
+        .expect("sessions")
+        .search("streamed", 10)
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].session_id, session_id);
 }
 
 #[tokio::test]
@@ -222,7 +286,7 @@ async fn ask_injects_enabled_matching_skill_context() {
             pengepul_base_url: llm.base_url(),
             pengepul_api_key: "sk-test".to_string(),
             wiki_base_url: wiki.base_url(),
-            model: "gpt-5".to_string(),
+            model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
             provider_id: "pengepul".to_string(),
             working_dir: PathBuf::from("/tmp"),

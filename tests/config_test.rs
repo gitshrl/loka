@@ -174,3 +174,25 @@ state_dir = "/srv/loka-state"
 
     assert_eq!(state_dir, PathBuf::from("/srv/loka-state"));
 }
+
+#[test]
+fn wiki_base_url_loads_without_provider_credentials() {
+    let home = tempfile::tempdir().expect("home");
+    let config_dir = home.path().join(".loka");
+    fs::create_dir(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"
+wiki_base_url = "http://127.0.0.1:9002"
+"#,
+    )
+    .expect("config file");
+
+    let wiki_base_url = AppConfig::wiki_base_url_from_env_map(|key| match key {
+        "HOME" => Some(home.path().display().to_string()),
+        _ => None,
+    })
+    .expect("wiki base url");
+
+    assert_eq!(wiki_base_url, "http://127.0.0.1:9002");
+}

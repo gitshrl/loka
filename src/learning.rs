@@ -4,7 +4,7 @@ use crate::config::AppConfig;
 use crate::llm::{ChatRequest, LlmClient};
 use crate::messages::Message;
 use crate::session::{SessionStore, SessionTurn};
-use crate::wiki::{NoteInput, WikiClient};
+use crate::wiki::{NoteInput, PendingProposal, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearnSessionRequest {
@@ -77,6 +77,24 @@ impl LearningEngine {
 
         Ok(LearnSessionOutput::ProposalCreated { proposal_id })
     }
+}
+
+/// Lists pending learning proposals from `personal-wiki`.
+///
+/// # Errors
+///
+/// Returns an error when `personal-wiki` cannot list pending proposals.
+pub async fn pending_learning_proposals(
+    wiki: &WikiClient,
+    limit: u16,
+) -> Result<Vec<PendingProposal>> {
+    let proposals = wiki.pending_proposals(limit).await?;
+    Ok(proposals.into_iter().filter(is_learning_proposal).collect())
+}
+
+fn is_learning_proposal(proposal: &PendingProposal) -> bool {
+    proposal.tags.iter().any(|tag| tag == "learning")
+        || proposal.title.starts_with("Session learning:")
 }
 
 fn learning_system_prompt() -> &'static str {

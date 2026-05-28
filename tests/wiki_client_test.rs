@@ -94,3 +94,40 @@ async fn add_note_rejects_direct_write_response() {
 
     assert!(error.to_string().contains("unexpected note write mode"));
 }
+
+#[tokio::test]
+async fn list_pending_proposals_uses_status_and_limit_query() {
+    let server = MockServer::start();
+    let proposals = server.mock(|when, then| {
+        when.method(GET)
+            .path("/api/proposals")
+            .query_param("status", "pending")
+            .query_param("limit", "5");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "proposals": [
+                    {
+                        "id": "proposal-1",
+                        "title": "Session learning: abc",
+                        "kind": "note",
+                        "tags": ["learning", "session"],
+                        "createdAt": "2026-05-28T00:00:00Z"
+                    }
+                ]
+            }));
+    });
+
+    let client = WikiClient::new(server.base_url());
+    let output = client
+        .pending_proposals(5)
+        .await
+        .expect("pending proposals");
+
+    proposals.assert();
+    assert_eq!(output.len(), 1);
+    assert_eq!(output[0].id, "proposal-1");
+    assert_eq!(output[0].title, "Session learning: abc");
+    assert_eq!(output[0].tags, vec!["learning", "session"]);
+}

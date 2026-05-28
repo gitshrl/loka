@@ -50,12 +50,38 @@ enum WriteMode {
 #[derive(Debug, Deserialize)]
 struct NoteResponse {
     mode: String,
-    proposal: Option<Proposal>,
+    proposal: Option<NoteProposal>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Proposal {
+struct NoteProposal {
     id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PendingProposal {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PendingProposalsQuery {
+    status: ProposalStatus,
+    limit: u16,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ProposalStatus {
+    Pending,
+}
+
+#[derive(Debug, Deserialize)]
+struct PendingProposalsResponse {
+    proposals: Vec<PendingProposal>,
 }
 
 impl WikiClient {
@@ -142,5 +168,39 @@ impl WikiClient {
             .map(|proposal| proposal.id)
             .filter(|id| !id.trim().is_empty())
             .ok_or_else(|| anyhow!("personal-wiki returned no proposal id"))
+    }
+
+    /// Lists pending proposal records from `personal-wiki`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the HTTP request fails, the service returns a non-success status,
+    /// or the response cannot be decoded.
+    pub async fn pending_proposals(&self, limit: u16) -> Result<Vec<PendingProposal>> {
+        let response = self
+            .http
+            .get(format!("{}/api/proposals", self.base_url))
+            .query(&PendingProposalsQuery {
+                status: ProposalStatus::Pending,
+                limit,
+            })
+            .send()
+            .await
+            .context("send personal-wiki proposal list request")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "personal-wiki proposal list failed with {status}: {body}"
+            ));
+        }
+
+        let body: PendingProposalsResponse = response
+            .json()
+            .await
+            .context("parse personal-wiki proposal list response")?;
+
+        Ok(body.proposals)
     }
 }

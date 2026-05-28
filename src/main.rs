@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest};
 use loka_agent::config::AppConfig;
-use loka_agent::learning::{LearnSessionOutput, LearnSessionRequest, LearningEngine};
+use loka_agent::learning::{
+    LearnSessionOutput, LearnSessionRequest, LearningEngine, pending_learning_proposals,
+};
 use loka_agent::llm::{ChatRequest, LlmClient};
 use loka_agent::messages::Message;
 use loka_agent::multi_agent::{
@@ -12,6 +14,7 @@ use loka_agent::permissions::{ApprovalPolicy, PermissionMode};
 use loka_agent::session::SessionStore;
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
 use loka_agent::tools::ToolRegistry;
+use loka_agent::wiki::WikiClient;
 use std::fmt;
 use std::io::{self, Write};
 
@@ -120,6 +123,11 @@ enum LearnCommand {
     Session {
         #[arg(help = "Session id to learn from")]
         session_id: String,
+    },
+    #[command(about = "list pending learning proposals")]
+    Review {
+        #[arg(long, default_value_t = 20, help = "Maximum proposals to print")]
+        limit: u16,
     },
 }
 
@@ -400,12 +408,11 @@ fn handle_sessions(command: SessionsCommand) -> Result<()> {
 }
 
 async fn handle_learn(command: LearnCommand) -> Result<()> {
-    let config = AppConfig::from_env()?;
-    let sessions = SessionStore::open(&config.state_dir)?;
-    let learning = LearningEngine::new(config, sessions);
-
     match command {
         LearnCommand::Session { session_id } => {
+            let config = AppConfig::from_env()?;
+            let sessions = SessionStore::open(&config.state_dir)?;
+            let learning = LearningEngine::new(config, sessions);
             match learning
                 .learn_session(LearnSessionRequest { session_id })
                 .await?
@@ -416,6 +423,17 @@ async fn handle_learn(command: LearnCommand) -> Result<()> {
                 LearnSessionOutput::NoDurableKnowledge => {
                     println!("no durable knowledge");
                 }
+            }
+        }
+        LearnCommand::Review { limit } => {
+            let wiki = WikiClient::new(AppConfig::wiki_base_url_from_env()?);
+            for proposal in pending_learning_proposals(&wiki, limit).await? {
+                println!(
+                    "{}\t{}\t{}",
+                    proposal.id,
+                    proposal.title,
+                    proposal.tags.join(",")
+                );
             }
         }
     }

@@ -30,6 +30,36 @@ struct FileConfig {
 }
 
 impl AppConfig {
+    /// Loads the wiki base URL from environment and `~/.loka/config.toml` without requiring
+    /// provider credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the config file exists but cannot be read or parsed, or when the
+    /// wiki URL is invalid.
+    pub fn wiki_base_url_from_env() -> Result<String> {
+        Self::wiki_base_url_from_env_map(|key| std::env::var(key).ok())
+    }
+
+    /// Loads the wiki base URL from a caller-provided key/value source and optional config file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the config file exists but cannot be read or parsed, or when the
+    /// wiki URL is invalid.
+    pub fn wiki_base_url_from_env_map<F>(get: F) -> Result<String>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let file = load_file_config(&config_file_path(&get))?;
+        get_optional_url(
+            &get,
+            "LOKA_WIKI_BASE_URL",
+            file.wiki_base_url.as_deref(),
+            "http://127.0.0.1:4321",
+        )
+    }
+
     /// Loads the state directory from environment and `~/.loka/config.toml` without requiring
     /// provider credentials.
     ///

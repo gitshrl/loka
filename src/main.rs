@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest};
 use loka_agent::config::AppConfig;
+use loka_agent::gateway::run_telegram_gateway;
 use loka_agent::learning::{
     LearnSessionOutput, LearnSessionRequest, LearningEngine, pending_learning_proposals,
 };
@@ -25,6 +26,7 @@ use loka_agent::tui::{TuiApp, run_tui};
 use loka_agent::wiki::WikiClient;
 use std::fmt;
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -117,6 +119,11 @@ enum Command {
         search: String,
         #[arg(long, default_value_t = 20, help = "Maximum search hits to load")]
         limit: u16,
+    },
+    #[command(about = "run messaging gateways")]
+    Gateway {
+        #[command(subcommand)]
+        command: GatewayCommand,
     },
     #[command(about = "check whether the CLI can start")]
     Health,
@@ -238,6 +245,25 @@ enum RuntimeCliCommand {
         timeout_seconds: u64,
         #[arg(last = true, required = true, help = "Command and arguments after --")]
         command: Vec<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum GatewayCommand {
+    #[command(about = "run the Telegram webhook gateway")]
+    Telegram {
+        #[arg(
+            long,
+            default_value = "127.0.0.1:8787",
+            help = "Gateway listen address"
+        )]
+        addr: SocketAddr,
+        #[arg(long, default_value = "/telegram/webhook", help = "Webhook route path")]
+        path: String,
+        #[arg(long, help = "Telegram bot token; defaults to ~/.loka/config.toml")]
+        token: Option<String>,
+        #[arg(long, help = "Inject personal-wiki recall before responding")]
+        recall: bool,
     },
 }
 
@@ -369,6 +395,7 @@ async fn main() -> Result<()> {
         }
         Command::Runtime { command } => handle_runtime(command).await?,
         Command::Tui { search, limit } => handle_tui(&search, limit)?,
+        Command::Gateway { command } => handle_gateway(command).await?,
         Command::Health => {
             println!("ok");
         }
@@ -492,6 +519,26 @@ fn handle_tui(search: &str, limit: u16) -> Result<()> {
     let sessions = SessionStore::open(&state_dir)?;
     let mut app = TuiApp::from_sessions(&sessions, search, limit)?;
     run_tui(&mut app)
+}
+
+async fn handle_gateway(command: GatewayCommand) -> Result<()> {
+    match command {
+        GatewayCommand::Telegram {
+            addr,
+            path,
+            token,
+            recall,
+        } => {
+            let config = AppConfig::from_env()?;
+            let token = match token {
+                Some(token) => token,
+                None => AppConfig::telegram_bot_token_from_env()?,
+            };
+            run_telegram_gateway(config, token, addr, path, recall).await?;
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_learn(command: LearnCommand) -> Result<()> {

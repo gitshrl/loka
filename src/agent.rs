@@ -145,6 +145,69 @@ impl Agent {
         })
     }
 
+    /// Answers a prompt as the next turn in an existing persisted session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no session store is configured, the session does not exist,
+    /// recall fails, session persistence fails, or the model request fails.
+    pub async fn ask_in_session(
+        &self,
+        session_id: &str,
+        prompt: String,
+        recall: bool,
+        system_message: Option<String>,
+    ) -> Result<AskOutput> {
+        let prompt = prompt.trim().to_string();
+        if prompt.is_empty() {
+            bail!("session turn requires a message");
+        }
+        let turns = {
+            let sessions = self
+                .sessions
+                .as_ref()
+                .ok_or_else(|| anyhow!("ask_in_session requires a session store"))?;
+            if !sessions.session_exists(session_id)? {
+                bail!("session {session_id} not found");
+            }
+            sessions.session_turns(session_id)?
+        };
+
+        let system_prompt = self
+            .build_system_prompt(
+                &prompt,
+                recall,
+                Some(session_id.to_string()),
+                system_message,
+            )
+            .await?;
+        let mut transcript = Transcript::new();
+        transcript.push(Message::system(system_prompt));
+        for turn in turns {
+            transcript.push(Message {
+                role: turn.role,
+                content: turn.content,
+            });
+        }
+        transcript.push(Message::user(prompt.clone()));
+        self.append_turn(Some(session_id), Role::User, &prompt)?;
+
+        let response = self
+            .llm
+            .chat(ChatRequest {
+                model: self.config.model.clone(),
+                messages: transcript.into_messages(),
+            })
+            .await?;
+
+        self.append_turn(Some(session_id), Role::Assistant, &response.content)?;
+
+        Ok(AskOutput {
+            answer: response.content,
+            session_id: Some(session_id.to_string()),
+        })
+    }
+
     /// Runs a multi-turn chat in one persisted session.
     ///
     /// # Errors

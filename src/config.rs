@@ -27,9 +27,37 @@ struct FileConfig {
     provider_id: Option<String>,
     working_dir: Option<String>,
     state_dir: Option<String>,
+    telegram_bot_token: Option<String>,
 }
 
 impl AppConfig {
+    /// Loads the Telegram bot token from environment and `~/.loka/config.toml` without requiring
+    /// provider credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the token is missing or the config file cannot be read or parsed.
+    pub fn telegram_bot_token_from_env() -> Result<String> {
+        Self::telegram_bot_token_from_env_map(|key| std::env::var(key).ok())
+    }
+
+    /// Loads the Telegram bot token from a caller-provided key/value source and optional config file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the token is missing or the config file cannot be read or parsed.
+    pub fn telegram_bot_token_from_env_map<F>(get: F) -> Result<String>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let file = load_file_config(&config_file_path(&get))?;
+        get_required(
+            &get,
+            "LOKA_TELEGRAM_BOT_TOKEN",
+            file.telegram_bot_token.as_deref(),
+        )
+    }
+
     /// Loads the wiki base URL from environment and `~/.loka/config.toml` without requiring
     /// provider credentials.
     ///

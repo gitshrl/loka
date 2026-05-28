@@ -196,3 +196,25 @@ wiki_base_url = "http://127.0.0.1:9002"
 
     assert_eq!(wiki_base_url, "http://127.0.0.1:9002");
 }
+
+#[test]
+fn telegram_bot_token_loads_from_home_loka_config() {
+    let home = tempfile::tempdir().expect("home");
+    let config_dir = home.path().join(".loka");
+    fs::create_dir(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"
+telegram_bot_token = "telegram-token"
+"#,
+    )
+    .expect("config file");
+
+    let token = AppConfig::telegram_bot_token_from_env_map(|key| match key {
+        "HOME" => Some(home.path().display().to_string()),
+        _ => None,
+    })
+    .expect("telegram token");
+
+    assert_eq!(token, "telegram-token");
+}

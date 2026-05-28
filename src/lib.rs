@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod gateway;
 pub mod learning;
 pub mod llm;
 pub mod messages;

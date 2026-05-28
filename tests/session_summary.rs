@@ -2,9 +2,7 @@ use httpmock::prelude::*;
 use loka::config::AppConfig;
 use loka::messages::Role;
 use loka::session::SessionStore;
-use loka::session_summary::{
-    SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest,
-};
+use loka::session_summary::{SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest};
 use serde_json::json;
 use std::path::PathBuf;
 

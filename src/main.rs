@@ -19,9 +19,7 @@ use loka::runtime::{
     RuntimeExecutor, RuntimeOutput, ServerlessExecutor, SshExecutor,
 };
 use loka::session::SessionStore;
-use loka::session_summary::{
-    SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest,
-};
+use loka::session_summary::{SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest};
 use loka::skill_creation::{
     ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
 };

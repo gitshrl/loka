@@ -225,12 +225,7 @@ impl AppConfig {
                 "http://127.0.0.1:4321",
             )?,
             model: get_optional(&get, "LOKA_MODEL", file.model.as_deref(), "gpt-5.5"),
-            agent_id: get_optional(
-                &get,
-                "LOKA_AGENT_ID",
-                file.agent_id.as_deref(),
-                "loka",
-            ),
+            agent_id: get_optional(&get, "LOKA_AGENT_ID", file.agent_id.as_deref(), "loka"),
             model_protocol: get_model_protocol(&get, file.model_protocol.as_deref())?,
             memory_lifecycle: get_memory_lifecycle(&get, file.memory_lifecycle.as_deref())?,
             working_dir,

@@ -7,7 +7,7 @@ use serde_json::json;
 use std::path::PathBuf;
 
 #[tokio::test]
-async fn ask_with_recall_injects_wiki_context_before_llm_call() {
+async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
     let wiki = MockServer::start();
     let llm = MockServer::start();
 
@@ -30,6 +30,10 @@ async fn ask_with_recall_injects_wiki_context_before_llm_call() {
         when.method(POST)
             .path("/v1/chat/completions")
             .header("authorization", "Bearer sk-test")
+            .body_includes("# Loka Identity")
+            .body_includes("# Runtime State")
+            .body_includes("# Memory Recall")
+            .body_includes("Session ID: session-1")
             .body_includes("build the Rust platform spine")
             .body_includes("what next");
 
@@ -48,6 +52,8 @@ async fn ask_with_recall_injects_wiki_context_before_llm_call() {
         wiki_base_url: wiki.base_url(),
         model: "gpt-5".to_string(),
         agent_id: "loka-agent".to_string(),
+        provider_id: "pengepul".to_string(),
+        working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
 
@@ -55,6 +61,8 @@ async fn ask_with_recall_injects_wiki_context_before_llm_call() {
         .ask(AskRequest {
             prompt: "what next".to_string(),
             recall: true,
+            session_id: Some("session-1".to_string()),
+            system_message: None,
         })
         .await
         .expect("ask should succeed");
@@ -76,6 +84,10 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
     llm.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
+            .body_includes("# Loka Identity")
+            .body_includes("# Session Context")
+            .body_includes("Prefer terse answers.")
+            .body_excludes("# Memory Recall")
             .body_includes("what next");
 
         then.status(200)
@@ -93,6 +105,8 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
         wiki_base_url: wiki.base_url(),
         model: "gpt-5".to_string(),
         agent_id: "loka-agent".to_string(),
+        provider_id: "pengepul".to_string(),
+        working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
 
@@ -100,6 +114,8 @@ async fn ask_without_recall_does_not_call_personal_wiki() {
         .ask(AskRequest {
             prompt: "what next".to_string(),
             recall: false,
+            session_id: None,
+            system_message: Some("Prefer terse answers.".to_string()),
         })
         .await
         .expect("ask should succeed");
@@ -136,6 +152,8 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
             wiki_base_url: wiki.base_url(),
             model: "gpt-5".to_string(),
             agent_id: "loka-agent".to_string(),
+            provider_id: "pengepul".to_string(),
+            working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
         sessions,
@@ -145,6 +163,8 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
         .ask(AskRequest {
             prompt: "persist this".to_string(),
             recall: false,
+            session_id: None,
+            system_message: None,
         })
         .await
         .expect("ask should succeed");
@@ -204,6 +224,8 @@ async fn ask_injects_enabled_matching_skill_context() {
             wiki_base_url: wiki.base_url(),
             model: "gpt-5".to_string(),
             agent_id: "loka-agent".to_string(),
+            provider_id: "pengepul".to_string(),
+            working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
         sessions,
@@ -214,6 +236,8 @@ async fn ask_injects_enabled_matching_skill_context() {
         .ask(AskRequest {
             prompt: "rust review this module".to_string(),
             recall: false,
+            session_id: None,
+            system_message: None,
         })
         .await
         .expect("ask should succeed");

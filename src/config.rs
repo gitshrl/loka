@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub wiki_base_url: String,
     pub model: String,
     pub agent_id: String,
+    pub provider_id: String,
+    pub working_dir: PathBuf,
     pub state_dir: PathBuf,
 }
 
@@ -22,6 +24,8 @@ struct FileConfig {
     wiki_base_url: Option<String>,
     model: Option<String>,
     agent_id: Option<String>,
+    provider_id: Option<String>,
+    working_dir: Option<String>,
     state_dir: Option<String>,
 }
 
@@ -73,6 +77,7 @@ impl AppConfig {
             "LOKA_PENGEPUL_API_KEY",
             file.pengepul_api_key.as_deref(),
         )?;
+        let working_dir = get_working_dir(&get, file.working_dir.as_deref())?;
 
         Ok(Self {
             pengepul_base_url: get_optional_url(
@@ -95,6 +100,13 @@ impl AppConfig {
                 file.agent_id.as_deref(),
                 "loka-agent",
             ),
+            provider_id: get_optional(
+                &get,
+                "LOKA_PROVIDER_ID",
+                file.provider_id.as_deref(),
+                "pengepul",
+            ),
+            working_dir,
             state_dir: get_state_dir(&get, &file),
         })
     }
@@ -152,6 +164,23 @@ where
     }
 
     loka_dir(get)
+}
+
+fn get_working_dir<F>(get: &F, file_value: Option<&str>) -> Result<PathBuf>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let dir = get_value(get, "LOKA_WORKING_DIR")
+        .or_else(|| normalize_optional(file_value))
+        .map(PathBuf::from)
+        .map_or_else(std::env::current_dir, Ok)
+        .context("read current working directory")?;
+
+    if !dir.is_absolute() {
+        return Err(anyhow!("LOKA_WORKING_DIR must be an absolute path"));
+    }
+
+    Ok(dir)
 }
 
 fn config_file_path<F>(get: &F) -> PathBuf

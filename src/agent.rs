@@ -3,9 +3,11 @@ use anyhow::{Result, anyhow, bail};
 use crate::config::AppConfig;
 use crate::llm::{ChatRequest, LlmClient};
 use crate::messages::{Message, Role, Transcript};
+use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
 use crate::skills::SkillStore;
 use crate::wiki::{NoteInput, WikiClient};
+use time::OffsetDateTime;
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
@@ -14,6 +16,8 @@ const RECALL_DEPTH: u8 = 1;
 pub struct AskRequest {
     pub prompt: String,
     pub recall: bool,
+    pub session_id: Option<String>,
+    pub system_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +57,7 @@ pub struct Agent {
     config: AppConfig,
     llm: LlmClient,
     wiki: WikiClient,
+    prompt_builder: PromptBuilder,
     sessions: Option<SessionStore>,
     skills: Option<SkillStore>,
 }
@@ -66,6 +71,7 @@ impl Agent {
                 config.pengepul_api_key.clone(),
             ),
             wiki: WikiClient::new(config.wiki_base_url.clone()),
+            prompt_builder: PromptBuilder::new(),
             config,
             sessions: None,
             skills: None,
@@ -80,6 +86,7 @@ impl Agent {
                 config.pengepul_api_key.clone(),
             ),
             wiki: WikiClient::new(config.wiki_base_url.clone()),
+            prompt_builder: PromptBuilder::new(),
             config,
             sessions: Some(sessions),
             skills: None,
@@ -94,6 +101,7 @@ impl Agent {
                 config.pengepul_api_key.clone(),
             ),
             wiki: WikiClient::new(config.wiki_base_url.clone()),
+            prompt_builder: PromptBuilder::new(),
             config,
             sessions: Some(sessions),
             skills: Some(skills),
@@ -107,29 +115,17 @@ impl Agent {
     /// Returns an error when recall fails, session persistence fails, or the model request fails.
     pub async fn ask(&self, request: AskRequest) -> Result<AskOutput> {
         let session_id = self.create_session(&request.prompt)?;
+        let prompt_session_id = request.session_id.clone().or_else(|| session_id.clone());
+        let system_prompt = self
+            .build_system_prompt(
+                &request.prompt,
+                request.recall,
+                prompt_session_id,
+                request.system_message,
+            )
+            .await?;
         let mut transcript = Transcript::new();
-        transcript.push(Message::system(system_prompt()));
-
-        for skill in self.enabled_skills_for_prompt(&request.prompt)? {
-            transcript.push(Message::system(format!(
-                "Enabled skill available for this request:\n\n{}",
-                skill.prompt_block()
-            )));
-        }
-
-        if request.recall {
-            let memory = self
-                .wiki
-                .rag(&request.prompt, RECALL_LIMIT, RECALL_DEPTH)
-                .await?;
-            if !memory.markdown.trim().is_empty() {
-                transcript.push(Message::system(format!(
-                    "Relevant memory from personal-wiki:\n\n{}",
-                    memory.markdown.trim()
-                )));
-            }
-        }
-
+        transcript.push(Message::system(system_prompt));
         transcript.push(Message::user(request.prompt.clone()));
         self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
 
@@ -181,11 +177,9 @@ impl Agent {
             .as_ref()
             .ok_or_else(|| anyhow!("chat requires a session store"))?;
         let session_id = sessions.create_session(title)?;
-        let mut transcript = Transcript::new();
-        transcript.push(Message::system(system_prompt()));
         Ok(ChatSession {
             session_id,
-            transcript,
+            transcript: Transcript::new(),
             recall,
         })
     }
@@ -210,22 +204,18 @@ impl Agent {
             .sessions
             .as_ref()
             .ok_or_else(|| anyhow!("chat requires a session store"))?;
-        let mut call_transcript = session.transcript.clone();
-        for skill in self.enabled_skills_for_prompt(&prompt)? {
-            call_transcript.push(Message::system(format!(
-                "Enabled skill available for this request:\n\n{}",
-                skill.prompt_block()
-            )));
-        }
-
-        if session.recall {
-            let memory = self.wiki.rag(&prompt, RECALL_LIMIT, RECALL_DEPTH).await?;
-            if !memory.markdown.trim().is_empty() {
-                call_transcript.push(Message::system(format!(
-                    "Relevant memory from personal-wiki:\n\n{}",
-                    memory.markdown.trim()
-                )));
-            }
+        let system_prompt = self
+            .build_system_prompt(
+                &prompt,
+                session.recall,
+                Some(session.session_id.clone()),
+                None,
+            )
+            .await?;
+        let mut call_transcript = Transcript::new();
+        call_transcript.push(Message::system(system_prompt));
+        for message in session.transcript.messages() {
+            call_transcript.push(message.clone());
         }
 
         let user = Message::user(prompt.clone());
@@ -287,10 +277,62 @@ impl Agent {
             .transpose()
             .map(Option::unwrap_or_default)
     }
-}
 
-fn system_prompt() -> &'static str {
-    "You are Loka, a personal agent platform. Use provided memory only when it is relevant. Be direct, concrete, and practical."
+    async fn build_system_prompt(
+        &self,
+        prompt: &str,
+        recall: bool,
+        session_id: Option<String>,
+        system_message: Option<String>,
+    ) -> Result<String> {
+        let memory_markdown = if recall {
+            let memory = self.wiki.rag(prompt, RECALL_LIMIT, RECALL_DEPTH).await?;
+            Some(memory.markdown)
+        } else {
+            None
+        };
+        let context_files = discover_context_files(&self.config.working_dir)?;
+        let system_message = self.context_system_message(prompt, system_message)?;
+
+        let prompt_input = PromptInput {
+            agent_id: self.config.agent_id.clone(),
+            model: self.config.model.clone(),
+            provider_id: self.config.provider_id.clone(),
+            session_id,
+            system_message,
+            memory_markdown,
+            context_files,
+            date: conversation_date(),
+        };
+
+        Ok(self.prompt_builder.build(&prompt_input).assemble())
+    }
+
+    fn context_system_message(
+        &self,
+        prompt: &str,
+        system_message: Option<String>,
+    ) -> Result<Option<String>> {
+        let mut parts = Vec::new();
+        if let Some(system_message) = system_message
+            && !system_message.trim().is_empty()
+        {
+            parts.push(system_message.trim().to_string());
+        }
+
+        for skill in self.enabled_skills_for_prompt(prompt)? {
+            parts.push(format!(
+                "Enabled skill available for this request:\n\n{}",
+                skill.prompt_block()
+            ));
+        }
+
+        Ok(if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        })
+    }
 }
 
 fn normalize_chat_messages(messages: Vec<String>) -> Result<Vec<String>> {
@@ -305,4 +347,11 @@ fn normalize_chat_messages(messages: Vec<String>) -> Result<Vec<String>> {
     }
 
     Ok(prompts)
+}
+
+fn conversation_date() -> String {
+    OffsetDateTime::now_local()
+        .unwrap_or_else(|_| OffsetDateTime::now_utc())
+        .date()
+        .to_string()
 }

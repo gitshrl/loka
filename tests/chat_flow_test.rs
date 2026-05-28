@@ -90,6 +90,8 @@ fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
         wiki_base_url: wiki.base_url(),
         model: "gpt-5".to_string(),
         agent_id: "loka-agent".to_string(),
+        provider_id: "pengepul".to_string(),
+        working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }
 }

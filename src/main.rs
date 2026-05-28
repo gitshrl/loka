@@ -31,6 +31,10 @@ enum Command {
         prompt: String,
         #[arg(long, help = "Inject relevant personal-wiki context before answering")]
         recall: bool,
+        #[arg(long, help = "Session id to expose in the prompt runtime state")]
+        session_id: Option<String>,
+        #[arg(long, help = "Additional caller system message for this request")]
+        system_message: Option<String>,
     },
     #[command(about = "chat with the agent in one persisted session")]
     Chat {
@@ -247,7 +251,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Ask { prompt, recall } => handle_ask(prompt, recall).await?,
+        Command::Ask {
+            prompt,
+            recall,
+            session_id,
+            system_message,
+        } => handle_ask(prompt, recall, session_id, system_message).await?,
         Command::Chat { recall, messages } => handle_chat(recall, messages).await?,
         Command::Remember { title, body, tags } => handle_remember(title, body, tags).await?,
         Command::Sessions { command } => handle_sessions(command)?,
@@ -280,12 +289,24 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_ask(prompt: String, recall: bool) -> Result<()> {
+async fn handle_ask(
+    prompt: String,
+    recall: bool,
+    session_id: Option<String>,
+    system_message: Option<String>,
+) -> Result<()> {
     let config = AppConfig::from_env()?;
     let sessions = SessionStore::open(&config.state_dir)?;
     let skills = SkillStore::open(&config.state_dir)?;
     let agent = Agent::with_stores(config, sessions, skills);
-    let output = agent.ask(AskRequest { prompt, recall }).await?;
+    let output = agent
+        .ask(AskRequest {
+            prompt,
+            recall,
+            session_id,
+            system_message,
+        })
+        .await?;
     println!("{}", output.answer);
     Ok(())
 }

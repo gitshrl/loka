@@ -5,6 +5,7 @@ pub mod llm;
 pub mod messages;
 pub mod multi_agent;
 pub mod permissions;
+pub mod prompt;
 pub mod session;
 pub mod skills;
 pub mod tool_runtime;

@@ -5,12 +5,14 @@ use crate::llm::{ChatRequest, LlmClient};
 use crate::messages::{Message, Role, Transcript};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
+use crate::session_summary::{SessionSummaryOutput, SessionSummaryRequest, summarize_session};
 use crate::skills::SkillStore;
 use crate::wiki::{NoteInput, WikiClient};
 use time::OffsetDateTime;
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
+pub const DEFAULT_SUMMARY_MIN_TURNS: usize = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskRequest {
@@ -36,6 +38,7 @@ pub struct ChatSessionRequest {
 pub struct ChatSessionOutput {
     pub session_id: String,
     pub answers: Vec<String>,
+    pub summary_proposal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,10 +269,14 @@ impl Agent {
         for prompt in prompts {
             answers.push(self.send_chat_turn(&mut session, prompt).await?);
         }
+        let summary_proposal_id = self
+            .summarize_session_if_long(&session.session_id, DEFAULT_SUMMARY_MIN_TURNS)
+            .await?;
 
         Ok(ChatSessionOutput {
             session_id: session.session_id,
             answers,
+            summary_proposal_id,
         })
     }
 
@@ -360,6 +367,38 @@ impl Agent {
                 tags,
             })
             .await
+    }
+
+    /// Summarizes a persisted session when it has enough turns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no session store is configured, the session is missing, or the
+    /// summary proposal cannot be created.
+    pub async fn summarize_session_if_long(
+        &self,
+        session_id: &str,
+        min_turns: usize,
+    ) -> Result<Option<String>> {
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| anyhow!("summarize_session_if_long requires a session store"))?;
+        match summarize_session(
+            &self.config,
+            &self.llm,
+            &self.wiki,
+            sessions,
+            SessionSummaryRequest {
+                session_id: session_id.to_string(),
+                min_turns,
+            },
+        )
+        .await?
+        {
+            SessionSummaryOutput::ProposalCreated { proposal_id } => Ok(Some(proposal_id)),
+            SessionSummaryOutput::TooShort { .. } => Ok(None),
+        }
     }
 
     fn create_session(&self, prompt: &str) -> Result<Option<String>> {

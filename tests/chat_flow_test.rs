@@ -53,6 +53,7 @@ async fn chat_reuses_one_session_and_sends_prior_turns() {
     first.assert();
     second.assert();
     assert_eq!(output.answers, vec!["First answer.", "Second answer."]);
+    assert_eq!(output.summary_proposal_id, None);
 
     let session_id = output.session_id;
     let sessions = SessionStore::open(state.path()).expect("sessions");
@@ -63,6 +64,81 @@ async fn chat_reuses_one_session_and_sends_prior_turns() {
     assert_eq!(turns[1].content, "First answer.");
     assert_eq!(turns[2].content, "follow up");
     assert_eq!(turns[3].content, "Second answer.");
+}
+
+#[tokio::test]
+async fn chat_summarizes_long_session_as_proposal() {
+    let wiki = MockServer::start();
+    let llm = MockServer::start();
+    let state = tempfile::tempdir().expect("state");
+    let sessions = SessionStore::open(state.path()).expect("sessions");
+
+    let chat_completion = llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_excludes("Summarize this Loka session")
+            .body_includes("turn");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "chat answer" } }
+                ]
+            }));
+    });
+    let summary_completion = llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("Summarize this Loka session")
+            .body_includes("turn 6");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "- durable chat summary" } }
+                ]
+            }));
+    });
+    let proposal = wiki.mock(|when, then| {
+        when.method(POST)
+            .path("/api/notes")
+            .body_includes("- durable chat summary")
+            .body_includes("loka-agent")
+            .body_includes("summary")
+            .body_includes("session")
+            .body_includes("propose");
+
+        then.status(201)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "mode": "propose",
+                "proposal": { "id": "proposal-auto-summary-1" }
+            }));
+    });
+
+    let agent = Agent::with_session_store(app_config(&llm, &wiki), sessions);
+    let output = agent
+        .chat(ChatSessionRequest {
+            messages: (1..=6).map(|index| format!("turn {index}")).collect(),
+            recall: false,
+        })
+        .await
+        .expect("chat should succeed");
+
+    assert_eq!(chat_completion.calls(), 6);
+    summary_completion.assert();
+    proposal.assert();
+    assert_eq!(output.answers.len(), 6);
+    assert_eq!(
+        output.summary_proposal_id,
+        Some("proposal-auto-summary-1".to_string())
+    );
+
+    let sessions = SessionStore::open(state.path()).expect("sessions");
+    let turns = sessions.session_turns(&output.session_id).expect("turns");
+    assert_eq!(turns.len(), 12);
 }
 
 #[tokio::test]

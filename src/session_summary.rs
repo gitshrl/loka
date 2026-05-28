@@ -44,40 +44,48 @@ impl SessionSummaryEngine {
     /// Returns an error when the session is empty, model summarization fails, or the wiki note
     /// proposal fails.
     pub async fn summarize(&self, request: SessionSummaryRequest) -> Result<SessionSummaryOutput> {
-        let turns = self.sessions.session_turns(&request.session_id)?;
-        if turns.is_empty() {
-            return Err(anyhow!("session {} has no turns", request.session_id));
-        }
-        if turns.len() < request.min_turns {
-            return Ok(SessionSummaryOutput::TooShort {
-                turn_count: turns.len(),
-            });
-        }
-
-        let summary = self
-            .llm
-            .chat(ChatRequest {
-                model: self.config.model.clone(),
-                messages: vec![
-                    Message::system(summary_system_prompt()),
-                    Message::user(format_session_for_summary(&request.session_id, &turns)),
-                ],
-            })
-            .await?;
-
-        let proposal_id = self
-            .wiki
-            .add_note(NoteInput {
-                title: format!("Session summary: {}", request.session_id),
-                body: summary.content,
-                kind: "note".to_string(),
-                agent_id: self.config.agent_id.clone(),
-                tags: vec!["summary".to_string(), "session".to_string()],
-            })
-            .await?;
-
-        Ok(SessionSummaryOutput::ProposalCreated { proposal_id })
+        summarize_session(&self.config, &self.llm, &self.wiki, &self.sessions, request).await
     }
+}
+
+pub(crate) async fn summarize_session(
+    config: &AppConfig,
+    llm: &LlmClient,
+    wiki: &WikiClient,
+    sessions: &SessionStore,
+    request: SessionSummaryRequest,
+) -> Result<SessionSummaryOutput> {
+    let turns = sessions.session_turns(&request.session_id)?;
+    if turns.is_empty() {
+        return Err(anyhow!("session {} has no turns", request.session_id));
+    }
+    if turns.len() < request.min_turns {
+        return Ok(SessionSummaryOutput::TooShort {
+            turn_count: turns.len(),
+        });
+    }
+
+    let summary = llm
+        .chat(ChatRequest {
+            model: config.model.clone(),
+            messages: vec![
+                Message::system(summary_system_prompt()),
+                Message::user(format_session_for_summary(&request.session_id, &turns)),
+            ],
+        })
+        .await?;
+
+    let proposal_id = wiki
+        .add_note(NoteInput {
+            title: format!("Session summary: {}", request.session_id),
+            body: summary.content,
+            kind: "note".to_string(),
+            agent_id: config.agent_id.clone(),
+            tags: vec!["summary".to_string(), "session".to_string()],
+        })
+        .await?;
+
+    Ok(SessionSummaryOutput::ProposalCreated { proposal_id })
 }
 
 fn summary_system_prompt() -> &'static str {

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest};
+use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest, DEFAULT_SUMMARY_MIN_TURNS};
 use loka_agent::config::AppConfig;
 use loka_agent::gateway::run_telegram_gateway;
 use loka_agent::learning::{
@@ -477,6 +477,9 @@ async fn handle_chat(recall: bool, messages: Vec<String>) -> Result<()> {
         for answer in output.answers {
             println!("{answer}");
         }
+        if let Some(proposal_id) = output.summary_proposal_id {
+            println!("summary\t{proposal_id}");
+        }
         Ok(())
     }
 }
@@ -509,6 +512,14 @@ async fn run_interactive_chat(agent: &Agent, recall: bool) -> Result<()> {
             let answer = agent.send_chat_turn(chat, message.to_string()).await?;
             println!("assistant> {answer}");
         }
+    }
+
+    if let Some(chat) = chat
+        && let Some(proposal_id) = agent
+            .summarize_session_if_long(chat.id(), DEFAULT_SUMMARY_MIN_TURNS)
+            .await?
+    {
+        println!("summary\t{proposal_id}");
     }
 
     Ok(())

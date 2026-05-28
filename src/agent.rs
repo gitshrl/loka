@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
 
 use crate::config::AppConfig;
 use crate::llm::{ChatRequest, LlmClient};
@@ -20,6 +20,32 @@ pub struct AskRequest {
 pub struct AskOutput {
     pub answer: String,
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatSessionRequest {
+    pub messages: Vec<String>,
+    pub recall: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatSessionOutput {
+    pub session_id: String,
+    pub answers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatSession {
+    session_id: String,
+    transcript: Transcript,
+    recall: bool,
+}
+
+impl ChatSession {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.session_id
+    }
 }
 
 #[derive(Debug)]
@@ -123,6 +149,105 @@ impl Agent {
         })
     }
 
+    /// Runs a multi-turn chat in one persisted session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no session store is configured, the request has no non-empty
+    /// messages, recall fails, persistence fails, or a model request fails.
+    pub async fn chat(&self, request: ChatSessionRequest) -> Result<ChatSessionOutput> {
+        let prompts = normalize_chat_messages(request.messages)?;
+        let mut session = self.start_chat(&prompts[0], request.recall)?;
+        let mut answers = Vec::with_capacity(prompts.len());
+
+        for prompt in prompts {
+            answers.push(self.send_chat_turn(&mut session, prompt).await?);
+        }
+
+        Ok(ChatSessionOutput {
+            session_id: session.session_id,
+            answers,
+        })
+    }
+
+    /// Starts a persisted chat session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no session store is configured or session creation fails.
+    pub fn start_chat(&self, title: &str, recall: bool) -> Result<ChatSession> {
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| anyhow!("chat requires a session store"))?;
+        let session_id = sessions.create_session(title)?;
+        let mut transcript = Transcript::new();
+        transcript.push(Message::system(system_prompt()));
+        Ok(ChatSession {
+            session_id,
+            transcript,
+            recall,
+        })
+    }
+
+    /// Sends one turn in an existing chat session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the prompt is empty, recall fails, persistence fails, or the model
+    /// request fails.
+    pub async fn send_chat_turn(
+        &self,
+        session: &mut ChatSession,
+        prompt: String,
+    ) -> Result<String> {
+        let prompt = prompt.trim().to_string();
+        if prompt.is_empty() {
+            bail!("chat turn requires a message");
+        }
+
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| anyhow!("chat requires a session store"))?;
+        let mut call_transcript = session.transcript.clone();
+        for skill in self.enabled_skills_for_prompt(&prompt)? {
+            call_transcript.push(Message::system(format!(
+                "Enabled skill available for this request:\n\n{}",
+                skill.prompt_block()
+            )));
+        }
+
+        if session.recall {
+            let memory = self.wiki.rag(&prompt, RECALL_LIMIT, RECALL_DEPTH).await?;
+            if !memory.markdown.trim().is_empty() {
+                call_transcript.push(Message::system(format!(
+                    "Relevant memory from personal-wiki:\n\n{}",
+                    memory.markdown.trim()
+                )));
+            }
+        }
+
+        let user = Message::user(prompt.clone());
+        call_transcript.push(user.clone());
+        sessions.append_turn(&session.session_id, Role::User, &prompt)?;
+
+        let response = self
+            .llm
+            .chat(ChatRequest {
+                model: self.config.model.clone(),
+                messages: call_transcript.into_messages(),
+            })
+            .await?;
+
+        sessions.append_turn(&session.session_id, Role::Assistant, &response.content)?;
+        session.transcript.push(user);
+        session
+            .transcript
+            .push(Message::assistant(response.content.clone()));
+        Ok(response.content)
+    }
+
     /// Creates a proposal-first memory note.
     ///
     /// # Errors
@@ -166,4 +291,18 @@ impl Agent {
 
 fn system_prompt() -> &'static str {
     "You are Loka, a personal agent platform. Use provided memory only when it is relevant. Be direct, concrete, and practical."
+}
+
+fn normalize_chat_messages(messages: Vec<String>) -> Result<Vec<String>> {
+    let prompts = messages
+        .into_iter()
+        .map(|message| message.trim().to_string())
+        .filter(|message| !message.is_empty())
+        .collect::<Vec<_>>();
+
+    if prompts.is_empty() {
+        bail!("chat requires at least one message");
+    }
+
+    Ok(prompts)
 }

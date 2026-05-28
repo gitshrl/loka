@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use loka_agent::agent::{Agent, AskRequest};
+use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest};
 use loka_agent::config::AppConfig;
 use loka_agent::learning::{LearnSessionOutput, LearnSessionRequest, LearningEngine};
 use loka_agent::llm::{ChatRequest, LlmClient};
@@ -13,6 +13,7 @@ use loka_agent::session::SessionStore;
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
 use loka_agent::tools::ToolRegistry;
 use std::fmt;
+use std::io::{self, Write};
 
 #[derive(Debug, Parser)]
 #[command(name = "loka")]
@@ -30,6 +31,13 @@ enum Command {
         prompt: String,
         #[arg(long, help = "Inject relevant personal-wiki context before answering")]
         recall: bool,
+    },
+    #[command(about = "chat with the agent in one persisted session")]
+    Chat {
+        #[arg(long, help = "Inject relevant personal-wiki context before each turn")]
+        recall: bool,
+        #[arg(long = "message", help = "Message to send; repeat for scripted chats")]
+        messages: Vec<String>,
     },
     #[command(about = "create a proposal-first memory note")]
     Remember {
@@ -240,6 +248,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Ask { prompt, recall } => handle_ask(prompt, recall).await?,
+        Command::Chat { recall, messages } => handle_chat(recall, messages).await?,
         Command::Remember { title, body, tags } => handle_remember(title, body, tags).await?,
         Command::Sessions { command } => handle_sessions(command)?,
         Command::Learn { command } => handle_learn(command).await?,
@@ -278,6 +287,57 @@ async fn handle_ask(prompt: String, recall: bool) -> Result<()> {
     let agent = Agent::with_stores(config, sessions, skills);
     let output = agent.ask(AskRequest { prompt, recall }).await?;
     println!("{}", output.answer);
+    Ok(())
+}
+
+async fn handle_chat(recall: bool, messages: Vec<String>) -> Result<()> {
+    let config = AppConfig::from_env()?;
+    let sessions = SessionStore::open(&config.state_dir)?;
+    let skills = SkillStore::open(&config.state_dir)?;
+    let agent = Agent::with_stores(config, sessions, skills);
+
+    if messages.is_empty() {
+        run_interactive_chat(&agent, recall).await
+    } else {
+        let output = agent.chat(ChatSessionRequest { messages, recall }).await?;
+        println!("session\t{}", output.session_id);
+        for answer in output.answers {
+            println!("{answer}");
+        }
+        Ok(())
+    }
+}
+
+async fn run_interactive_chat(agent: &Agent, recall: bool) -> Result<()> {
+    let mut chat = None;
+    let mut input = String::new();
+
+    loop {
+        print!("you> ");
+        io::stdout().flush()?;
+        input.clear();
+        if io::stdin().read_line(&mut input)? == 0 {
+            break;
+        }
+
+        let message = input.trim();
+        if message.eq_ignore_ascii_case("/exit") || message.eq_ignore_ascii_case("/quit") {
+            break;
+        }
+        if !message.is_empty() {
+            if chat.is_none() {
+                let started = agent.start_chat(message, recall)?;
+                println!("session\t{}", started.id());
+                chat = Some(started);
+            }
+            let Some(chat) = &mut chat else {
+                continue;
+            };
+            let answer = agent.send_chat_turn(chat, message.to_string()).await?;
+            println!("assistant> {answer}");
+        }
+    }
+
     Ok(())
 }
 

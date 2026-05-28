@@ -44,45 +44,53 @@ impl LearningEngine {
     /// Returns an error when the session does not exist, turn retrieval fails, model extraction
     /// fails, or `personal-wiki` rejects the proposal-first note write.
     pub async fn learn_session(&self, request: LearnSessionRequest) -> Result<LearnSessionOutput> {
-        let turns = self.sessions.session_turns(&request.session_id)?;
-        if turns.is_empty() {
-            return Err(anyhow!("session {} has no turns", request.session_id));
-        }
-
-        let tool_calls = self.sessions.session_tool_calls(&request.session_id)?;
-        let extraction = self
-            .llm
-            .chat(ChatRequest {
-                model: self.config.model.clone(),
-                messages: vec![
-                    Message::system(learning_system_prompt()),
-                    Message::user(format_session_for_learning(
-                        &request.session_id,
-                        &turns,
-                        &tool_calls,
-                    )),
-                ],
-            })
-            .await?;
-
-        let body = extraction.content.trim();
-        if body.eq_ignore_ascii_case("NONE") {
-            return Ok(LearnSessionOutput::NoDurableKnowledge);
-        }
-
-        let proposal_id = self
-            .wiki
-            .add_note(NoteInput {
-                title: format!("Session learning: {}", request.session_id),
-                body: body.to_string(),
-                kind: "note".to_string(),
-                agent_id: self.config.agent_id.clone(),
-                tags: vec!["learning".to_string(), "session".to_string()],
-            })
-            .await?;
-
-        Ok(LearnSessionOutput::ProposalCreated { proposal_id })
+        learn_from_session(&self.config, &self.llm, &self.wiki, &self.sessions, request).await
     }
+}
+
+pub(crate) async fn learn_from_session(
+    config: &AppConfig,
+    llm: &LlmClient,
+    wiki: &WikiClient,
+    sessions: &SessionStore,
+    request: LearnSessionRequest,
+) -> Result<LearnSessionOutput> {
+    let turns = sessions.session_turns(&request.session_id)?;
+    if turns.is_empty() {
+        return Err(anyhow!("session {} has no turns", request.session_id));
+    }
+
+    let tool_calls = sessions.session_tool_calls(&request.session_id)?;
+    let extraction = llm
+        .chat(ChatRequest {
+            model: config.model.clone(),
+            messages: vec![
+                Message::system(learning_system_prompt()),
+                Message::user(format_session_for_learning(
+                    &request.session_id,
+                    &turns,
+                    &tool_calls,
+                )),
+            ],
+        })
+        .await?;
+
+    let body = extraction.content.trim();
+    if body.eq_ignore_ascii_case("NONE") {
+        return Ok(LearnSessionOutput::NoDurableKnowledge);
+    }
+
+    let proposal_id = wiki
+        .add_note(NoteInput {
+            title: format!("Session learning: {}", request.session_id),
+            body: body.to_string(),
+            kind: "note".to_string(),
+            agent_id: config.agent_id.clone(),
+            tags: vec!["learning".to_string(), "session".to_string()],
+        })
+        .await?;
+
+    Ok(LearnSessionOutput::ProposalCreated { proposal_id })
 }
 
 /// Lists pending learning proposals from `personal-wiki`.

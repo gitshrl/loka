@@ -1,10 +1,12 @@
 use httpmock::prelude::*;
+use loka_agent::config::AppConfig;
 use loka_agent::messages::Role;
 use loka_agent::session::{SessionStore, ToolCallStatus};
 use loka_agent::tool_runtime::{ToolCall, ToolRuntime};
 use loka_agent::wiki::WikiClient;
 use serde_json::json;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[tokio::test]
@@ -181,6 +183,82 @@ async fn tool_runtime_executes_wiki_add_note_in_proposal_mode() {
 }
 
 #[tokio::test]
+async fn tool_runtime_executes_learn_session() {
+    let wiki = MockServer::start();
+    let llm = MockServer::start();
+    let sessions = SessionStore::in_memory().expect("sessions");
+    let session_id = sessions
+        .create_session("runtime learning")
+        .expect("session");
+    sessions
+        .append_turn(
+            &session_id,
+            Role::User,
+            "Decision: keep durable memory in personal-wiki.",
+        )
+        .expect("turn");
+
+    let completion = llm.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("Extract only durable knowledge")
+            .body_includes("durable memory in personal-wiki");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "- Decision: durable memory stays in personal-wiki." } }
+                ]
+            }));
+    });
+    let proposal = wiki.mock(|when, then| {
+        when.method(POST).path("/api/notes").json_body(json!({
+            "title": format!("Session learning: {session_id}"),
+            "body": "- Decision: durable memory stays in personal-wiki.",
+            "kind": "note",
+            "agentId": "loka-agent",
+            "tags": ["learning", "session"],
+            "mode": "propose"
+        }));
+
+        then.status(201)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "mode": "propose",
+                "proposal": { "id": "proposal-learning-tool-1" }
+            }));
+    });
+
+    let runtime = ToolRuntime::new(sessions).with_learning_config(app_config(&llm, &wiki));
+    let result = runtime
+        .execute(ToolCall {
+            name: "learn_session".to_string(),
+            input: json!({ "session_id": session_id }),
+        })
+        .await
+        .expect("learn_session tool should succeed");
+
+    completion.assert();
+    proposal.assert();
+    assert_eq!(result.output["proposal_id"], "proposal-learning-tool-1");
+}
+
+#[tokio::test]
+async fn tool_runtime_rejects_learn_session_without_learning_config() {
+    let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"));
+    let error = runtime
+        .execute(ToolCall {
+            name: "learn_session".to_string(),
+            input: json!({ "session_id": "missing" }),
+        })
+        .await
+        .expect_err("learning config is required");
+
+    assert!(error.to_string().contains("learning configuration"));
+}
+
+#[tokio::test]
 async fn tool_runtime_rejects_host_tool_without_workspace() {
     let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"));
     let error = runtime
@@ -307,4 +385,17 @@ async fn host_runtime_git_status_runs_in_workspace() {
             .expect("stdout")
             .contains("new.txt")
     );
+}
+
+fn app_config(llm: &MockServer, wiki: &MockServer) -> AppConfig {
+    AppConfig {
+        pengepul_base_url: llm.base_url(),
+        pengepul_api_key: "sk-test".to_string(),
+        wiki_base_url: wiki.base_url(),
+        model: "gpt-5.5".to_string(),
+        agent_id: "loka-agent".to_string(),
+        provider_id: "pengepul".to_string(),
+        working_dir: PathBuf::from("/tmp"),
+        state_dir: PathBuf::from(".test-state"),
+    }
 }

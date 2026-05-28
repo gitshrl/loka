@@ -10,6 +10,9 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::config::AppConfig;
+use crate::learning::{LearnSessionOutput, LearnSessionRequest, learn_from_session};
+use crate::llm::LlmClient;
 use crate::session::SessionStore;
 use crate::wiki::{NoteInput, WikiClient};
 
@@ -28,8 +31,16 @@ pub struct ToolResult {
 pub struct ToolRuntime {
     sessions: SessionStore,
     wiki: Option<WikiClient>,
+    learning: Option<LearningRuntime>,
     agent_id: String,
     host: Option<HostRuntime>,
+}
+
+#[derive(Debug)]
+struct LearningRuntime {
+    config: AppConfig,
+    llm: LlmClient,
+    wiki: WikiClient,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +78,11 @@ struct WikiAddNoteInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct LearnSessionInput {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReadFileInput {
     path: String,
 }
@@ -101,6 +117,7 @@ impl ToolRuntime {
         Self {
             sessions,
             wiki: None,
+            learning: None,
             agent_id: "loka-agent".to_string(),
             host: None,
         }
@@ -110,6 +127,16 @@ impl ToolRuntime {
     pub fn with_wiki(mut self, wiki: WikiClient, agent_id: impl Into<String>) -> Self {
         self.wiki = Some(wiki);
         self.agent_id = agent_id.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_learning_config(mut self, config: AppConfig) -> Self {
+        self.learning = Some(LearningRuntime {
+            llm: LlmClient::new(&config.pengepul_base_url, config.pengepul_api_key.clone()),
+            wiki: WikiClient::new(&config.wiki_base_url),
+            config,
+        });
         self
     }
 
@@ -139,6 +166,7 @@ impl ToolRuntime {
             "search_files" => self.execute_search_files(call.input),
             "git_status" => self.execute_git_status(call.input).await,
             "shell" => self.execute_shell(call.input).await,
+            "learn_session" => self.execute_learn_session(call.input).await,
             name => Err(anyhow!("tool {name} has no runtime executor")),
         }
     }
@@ -223,6 +251,36 @@ impl ToolRuntime {
             .await?;
         Ok(ToolResult {
             output: json!({ "proposal_id": proposal_id }),
+        })
+    }
+
+    async fn execute_learn_session(&self, input: Value) -> Result<ToolResult> {
+        let input: LearnSessionInput = serde_json::from_value(input)?;
+        let learning = self
+            .learning
+            .as_ref()
+            .ok_or_else(|| anyhow!("learn_session requires learning configuration"))?;
+        let output = learn_from_session(
+            &learning.config,
+            &learning.llm,
+            &learning.wiki,
+            &self.sessions,
+            LearnSessionRequest {
+                session_id: input.session_id,
+            },
+        )
+        .await?;
+
+        Ok(match output {
+            LearnSessionOutput::ProposalCreated { proposal_id } => ToolResult {
+                output: json!({
+                    "status": "proposal_created",
+                    "proposal_id": proposal_id,
+                }),
+            },
+            LearnSessionOutput::NoDurableKnowledge => ToolResult {
+                output: json!({ "status": "no_durable_knowledge" }),
+            },
         })
     }
 

@@ -108,19 +108,12 @@ where
         return PathBuf::from(value);
     }
 
-    if let Some(value) = get("XDG_STATE_HOME")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return PathBuf::from(value).join("loka-agent");
-    }
-
     if let Some(value) = get("HOME")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
-        return PathBuf::from(value).join(".loka-agent").join("state");
+        return PathBuf::from(value).join(".loka");
     }
 
-    PathBuf::from(".loka-agent").join("state")
+    PathBuf::from(".loka")
 }

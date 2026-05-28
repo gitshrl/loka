@@ -3,6 +3,7 @@ pub mod config;
 pub mod learning;
 pub mod llm;
 pub mod messages;
+pub mod multi_agent;
 pub mod permissions;
 pub mod session;
 pub mod skills;

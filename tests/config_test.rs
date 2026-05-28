@@ -14,7 +14,7 @@ fn config_uses_development_service_defaults() {
     assert_eq!(config.model, "gpt-5");
     assert_eq!(config.agent_id, "loka-agent");
     assert_eq!(config.pengepul_api_key, "sk-test");
-    assert_eq!(config.state_dir, PathBuf::from(".loka-agent/state"));
+    assert_eq!(config.state_dir, PathBuf::from(".loka"));
 }
 
 #[test]
@@ -50,9 +50,20 @@ fn config_uses_explicit_state_dir() {
 #[test]
 fn state_dir_can_load_without_provider_credentials() {
     let state_dir = AppConfig::state_dir_from_env_map(|key| match key {
+        "HOME" => Some("/home/dev".to_string()),
+        _ => None,
+    });
+
+    assert_eq!(state_dir, PathBuf::from("/home/dev/.loka"));
+}
+
+#[test]
+fn state_dir_ignores_xdg_state_home_by_default() {
+    let state_dir = AppConfig::state_dir_from_env_map(|key| match key {
+        "HOME" => Some("/home/dev".to_string()),
         "XDG_STATE_HOME" => Some("/srv/state".to_string()),
         _ => None,
     });
 
-    assert_eq!(state_dir, PathBuf::from("/srv/state/loka-agent"));
+    assert_eq!(state_dir, PathBuf::from("/home/dev/.loka"));
 }

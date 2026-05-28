@@ -5,6 +5,9 @@ use loka_agent::config::AppConfig;
 use loka_agent::learning::{LearnSessionOutput, LearnSessionRequest, LearningEngine};
 use loka_agent::llm::{ChatRequest, LlmClient};
 use loka_agent::messages::Message;
+use loka_agent::multi_agent::{
+    AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, WorkerSpec,
+};
 use loka_agent::permissions::{ApprovalPolicy, PermissionMode};
 use loka_agent::session::SessionStore;
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
@@ -56,6 +59,28 @@ enum Command {
     Skills {
         #[command(subcommand)]
         command: SkillsCommand,
+    },
+    #[command(about = "run a supervisor with bounded worker agents")]
+    Run {
+        #[arg(long, help = "Use supervisor/worker multi-agent execution")]
+        agents: bool,
+        #[arg(help = "Objective for the multi-agent run")]
+        objective: String,
+        #[arg(long = "worker", help = "Worker profile to include")]
+        workers: Vec<WorkerProfileArg>,
+        #[arg(
+            long,
+            help = "Inject shared personal-wiki memory into the supervisor and workers"
+        )]
+        recall: bool,
+        #[arg(
+            long,
+            default_value_t = 4,
+            help = "Maximum workers allowed for this run"
+        )]
+        max_workers: usize,
+        #[arg(long, default_value_t = 90, help = "Per-worker timeout in seconds")]
+        timeout_seconds: u64,
     },
     #[command(about = "check whether the CLI can start")]
     Health,
@@ -186,6 +211,25 @@ impl From<PermissionModeArg> for PermissionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum WorkerProfileArg {
+    Planner,
+    Researcher,
+    Coder,
+    Reviewer,
+}
+
+impl From<WorkerProfileArg> for AgentProfile {
+    fn from(value: WorkerProfileArg) -> Self {
+        match value {
+            WorkerProfileArg::Planner => Self::Planner,
+            WorkerProfileArg::Researcher => Self::Researcher,
+            WorkerProfileArg::Coder => Self::Coder,
+            WorkerProfileArg::Reviewer => Self::Reviewer,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -201,6 +245,24 @@ async fn main() -> Result<()> {
         Command::Learn { command } => handle_learn(command).await?,
         Command::Tools { command } => handle_tools(command),
         Command::Skills { command } => handle_skills(command).await?,
+        Command::Run {
+            agents,
+            objective,
+            workers,
+            recall,
+            max_workers,
+            timeout_seconds,
+        } => {
+            handle_run(
+                agents,
+                objective,
+                workers,
+                recall,
+                max_workers,
+                timeout_seconds,
+            )
+            .await?;
+        }
         Command::Health => {
             println!("ok");
         }
@@ -393,4 +455,144 @@ async fn handle_skills_run(id: &str, input: String) -> Result<()> {
         .await?;
     println!("{}", output.content);
     Ok(())
+}
+
+async fn handle_run(
+    agents: bool,
+    objective: String,
+    workers: Vec<WorkerProfileArg>,
+    recall: bool,
+    max_workers: usize,
+    timeout_seconds: u64,
+) -> Result<()> {
+    if !agents {
+        anyhow::bail!("run currently requires --agents");
+    }
+
+    let config = AppConfig::from_env()?;
+    let sessions = SessionStore::open(&config.state_dir)?;
+    let tasks = TaskGraphStore::open(&config.state_dir)?;
+    let runtime = MultiAgentRuntime::new(config, sessions, tasks);
+    let worker_specs = default_worker_specs(&objective, workers, timeout_seconds);
+    let output = runtime
+        .run(MultiAgentRunRequest {
+            objective,
+            recall,
+            max_workers,
+            workers: worker_specs,
+        })
+        .await?;
+
+    println!("run\t{}", output.run_id);
+    println!("supervisor_session\t{}", output.supervisor_session_id);
+    println!("tokens\t{}", output.total_tokens);
+    for worker in output.workers {
+        let summary = match worker.error {
+            Some(error) => format!("error: {}", error.replace('\n', " ")),
+            None => worker.summary.replace('\n', " "),
+        };
+        println!(
+            "worker\t{}\t{}\t{}\t{} tokens\t{}",
+            worker.profile, worker.status, worker.session_id, worker.tokens_used, summary
+        );
+    }
+    println!("\nsynthesis\n{}", output.synthesis);
+
+    Ok(())
+}
+
+fn default_worker_specs(
+    objective: &str,
+    requested: Vec<WorkerProfileArg>,
+    timeout_seconds: u64,
+) -> Vec<WorkerSpec> {
+    let profiles = if requested.is_empty() {
+        vec![
+            AgentProfile::Planner,
+            AgentProfile::Researcher,
+            AgentProfile::Coder,
+            AgentProfile::Reviewer,
+        ]
+    } else {
+        requested.into_iter().map(Into::into).collect()
+    };
+
+    profiles
+        .into_iter()
+        .map(|profile| default_worker_spec(profile, objective, timeout_seconds))
+        .collect()
+}
+
+fn default_worker_spec(profile: AgentProfile, objective: &str, timeout_seconds: u64) -> WorkerSpec {
+    let objective = objective.trim();
+    match profile {
+        AgentProfile::Supervisor => WorkerSpec {
+            profile,
+            objective: objective.to_string(),
+            output_format: "supervisor synthesis notes".to_string(),
+            tools_allowed: vec!["session_search".to_string(), "wiki_rag".to_string()],
+            max_iterations: 3,
+            max_tokens: 2_000,
+            timeout_seconds,
+            justification: "supervisor profile is reserved for synthesis".to_string(),
+        },
+        AgentProfile::Planner => WorkerSpec {
+            profile,
+            objective: format!("Create an execution plan for: {objective}"),
+            output_format: "concise plan with sequencing, dependencies, and risks".to_string(),
+            tools_allowed: vec!["session_search".to_string(), "wiki_rag".to_string()],
+            max_iterations: 4,
+            max_tokens: 3_000,
+            timeout_seconds,
+            justification: "planner decomposes the objective before implementation".to_string(),
+        },
+        AgentProfile::Researcher => WorkerSpec {
+            profile,
+            objective: format!(
+                "Find relevant context, unknowns, and external constraints for: {objective}"
+            ),
+            output_format: "research findings with sources or explicit uncertainty".to_string(),
+            tools_allowed: vec![
+                "wiki_rag".to_string(),
+                "session_search".to_string(),
+                "read_file".to_string(),
+                "search_files".to_string(),
+            ],
+            max_iterations: 4,
+            max_tokens: 3_000,
+            timeout_seconds,
+            justification: "researcher reduces uncertainty before code changes".to_string(),
+        },
+        AgentProfile::Coder => WorkerSpec {
+            profile,
+            objective: format!("Identify implementation changes for: {objective}"),
+            output_format: "code-level plan with files, tests, and failure modes".to_string(),
+            tools_allowed: vec![
+                "read_file".to_string(),
+                "search_files".to_string(),
+                "git_status".to_string(),
+            ],
+            max_iterations: 5,
+            max_tokens: 3_500,
+            timeout_seconds,
+            justification: "coder maps the objective into concrete code changes".to_string(),
+        },
+        AgentProfile::Reviewer => WorkerSpec {
+            profile,
+            objective: format!(
+                "Review the approach for correctness, safety, performance, and tests: {objective}"
+            ),
+            output_format: "review findings ordered by severity".to_string(),
+            tools_allowed: vec![
+                "read_file".to_string(),
+                "search_files".to_string(),
+                "git_status".to_string(),
+                "session_search".to_string(),
+            ],
+            max_iterations: 4,
+            max_tokens: 3_000,
+            timeout_seconds,
+            justification: "reviewer catches correctness, safety, and performance gaps".to_string(),
+        },
+    }
 }

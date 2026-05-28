@@ -143,6 +143,33 @@ impl ToolRuntime {
         }
     }
 
+    /// Executes a supported tool call and persists its transcript in the session store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the tool call cannot be recorded, the tool call itself fails,
+    /// or the final tool result cannot be persisted.
+    pub async fn execute_in_session(&self, session_id: &str, call: ToolCall) -> Result<ToolResult> {
+        let call_id =
+            self.sessions
+                .record_tool_call_started(session_id, &call.name, &call.input)?;
+
+        match self.execute(call).await {
+            Ok(result) => {
+                self.sessions
+                    .record_tool_call_completed(&call_id, &result.output)?;
+                Ok(result)
+            }
+            Err(error) => {
+                let error_text = error.to_string();
+                self.sessions
+                    .record_tool_call_failed(&call_id, &error_text)
+                    .with_context(|| format!("record failed tool call {call_id}"))?;
+                Err(error)
+            }
+        }
+    }
+
     fn execute_session_list(&self, input: Value) -> Result<ToolResult> {
         let input: SessionListInput = serde_json::from_value(input)?;
         let sessions = self.sessions.list_sessions(input.limit.unwrap_or(20))?;

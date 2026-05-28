@@ -13,7 +13,7 @@ use ratatui::{Frame, Terminal};
 use std::io;
 use std::time::Duration;
 
-use crate::session::{SearchHit, SessionStore, SessionSummary};
+use crate::session::{SearchHit, SessionStore, SessionSummary, ToolCallRecord};
 
 const PANES: [TuiPane; 5] = [
     TuiPane::Conversation,
@@ -66,10 +66,20 @@ impl TuiApp {
         } else {
             sessions.search(search, limit)?
         };
+        let recent_sessions = sessions.list_sessions(20)?;
+        let tool_calls = match recent_sessions.first() {
+            Some(session) => sessions
+                .session_tool_calls(&session.id)?
+                .into_iter()
+                .map(format_tool_call)
+                .collect(),
+            None => Vec::new(),
+        };
 
         Ok(Self {
-            sessions: sessions.list_sessions(20)?,
+            sessions: recent_sessions,
             search_hits,
+            tool_calls,
             ..Self::empty()
         })
     }
@@ -89,12 +99,34 @@ impl TuiApp {
         &self.search_hits
     }
 
+    #[must_use]
+    pub fn tool_calls(&self) -> &[String] {
+        &self.tool_calls
+    }
+
     fn select_next_pane(&mut self) {
         let current = PANES
             .iter()
             .position(|pane| *pane == self.selected_pane)
             .unwrap_or(0);
         self.selected_pane = PANES[(current + 1) % PANES.len()];
+    }
+}
+
+fn format_tool_call(call: ToolCallRecord) -> String {
+    let finished_at = call
+        .completed_at
+        .as_deref()
+        .unwrap_or(call.created_at.as_str());
+    match call.error {
+        Some(error) => format!(
+            "{}  {}  {}  {}",
+            finished_at,
+            call.status.as_str(),
+            call.name,
+            error.replace('\n', " ")
+        ),
+        None => format!("{}  {}  {}", finished_at, call.status.as_str(), call.name),
     }
 }
 

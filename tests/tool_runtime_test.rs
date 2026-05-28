@@ -1,6 +1,6 @@
 use httpmock::prelude::*;
 use loka_agent::messages::Role;
-use loka_agent::session::SessionStore;
+use loka_agent::session::{SessionStore, ToolCallStatus};
 use loka_agent::tool_runtime::{ToolCall, ToolRuntime};
 use loka_agent::wiki::WikiClient;
 use serde_json::json;
@@ -27,6 +27,83 @@ async fn tool_runtime_executes_session_search() {
     let hits = result.output["hits"].as_array().expect("hits");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0]["session_id"], session_id);
+}
+
+#[tokio::test]
+async fn tool_runtime_persists_completed_tool_call_transcript() {
+    let state = tempfile::tempdir().expect("state");
+    let database = state.path().join("sessions.sqlite3");
+    let sessions = SessionStore::open_database(&database).expect("sessions");
+    let session_id = sessions.create_session("tool transcript").expect("session");
+    sessions
+        .append_turn(&session_id, Role::User, "find approval policy")
+        .expect("turn");
+
+    let runtime = ToolRuntime::new(sessions);
+    let result = runtime
+        .execute_in_session(
+            &session_id,
+            ToolCall {
+                name: "session_search".to_string(),
+                input: json!({ "query": "approval", "limit": 10 }),
+            },
+        )
+        .await
+        .expect("tool call should succeed");
+    assert_eq!(result.output["hits"][0]["session_id"], session_id);
+
+    let inspector = SessionStore::open_database(&database).expect("inspector");
+    let calls = inspector
+        .session_tool_calls(&session_id)
+        .expect("tool calls");
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "session_search");
+    assert_eq!(calls[0].status, ToolCallStatus::Completed);
+    assert_eq!(calls[0].input, json!({ "query": "approval", "limit": 10 }));
+    assert_eq!(calls[0].output, Some(result.output));
+    assert_eq!(calls[0].error, None);
+    assert!(calls[0].completed_at.is_some());
+}
+
+#[tokio::test]
+async fn tool_runtime_persists_failed_tool_call_transcript() {
+    let state = tempfile::tempdir().expect("state");
+    let database = state.path().join("sessions.sqlite3");
+    let sessions = SessionStore::open_database(&database).expect("sessions");
+    let session_id = sessions.create_session("failed tool").expect("session");
+
+    let runtime = ToolRuntime::new(sessions);
+    let error = runtime
+        .execute_in_session(
+            &session_id,
+            ToolCall {
+                name: "shell".to_string(),
+                input: json!({ "command": "printf no-workspace" }),
+            },
+        )
+        .await
+        .expect_err("host workspace is required");
+    assert!(error.to_string().contains("host workspace"));
+
+    let inspector = SessionStore::open_database(&database).expect("inspector");
+    let calls = inspector
+        .session_tool_calls(&session_id)
+        .expect("tool calls");
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "shell");
+    assert_eq!(calls[0].status, ToolCallStatus::Failed);
+    assert_eq!(calls[0].input, json!({ "command": "printf no-workspace" }));
+    assert_eq!(calls[0].output, None);
+    assert!(
+        calls[0]
+            .error
+            .as_deref()
+            .expect("error")
+            .contains("host workspace")
+    );
+    assert!(calls[0].completed_at.is_some());
 }
 
 #[tokio::test]

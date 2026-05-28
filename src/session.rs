@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+use serde_json::Value;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -31,6 +32,48 @@ pub struct SearchHit {
     pub title: String,
     pub role: Role,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolCallStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+impl ToolCallStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    #[must_use]
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "running" => Some(Self::Running),
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ToolCallRecord {
+    pub id: String,
+    pub session_id: String,
+    pub name: String,
+    pub input: Value,
+    pub status: ToolCallStatus,
+    pub output: Option<Value>,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -170,6 +213,126 @@ impl SessionStore {
             .context("list session turns")
     }
 
+    /// Records a tool call before execution and returns its durable id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when timestamp formatting, JSON serialization, or the insert fails.
+    pub fn record_tool_call_started(
+        &self,
+        session_id: &str,
+        name: &str,
+        input: &Value,
+    ) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let now = now_rfc3339()?;
+        let input_json = serde_json::to_string(input).context("encode tool input")?;
+
+        self.conn
+            .execute(
+                "INSERT INTO tool_calls
+                    (id, session_id, name, input_json, status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    session_id,
+                    name,
+                    input_json,
+                    ToolCallStatus::Running.as_str(),
+                    now
+                ],
+            )
+            .context("record tool call start")?;
+
+        Ok(id)
+    }
+
+    /// Marks a tool call completed and stores the structured output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when timestamp formatting, JSON serialization, or the update fails.
+    pub fn record_tool_call_completed(&self, id: &str, output: &Value) -> Result<()> {
+        let now = now_rfc3339()?;
+        let output_json = serde_json::to_string(output).context("encode tool output")?;
+
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE tool_calls
+                 SET status = ?1, output_json = ?2, error = NULL, completed_at = ?3
+                 WHERE id = ?4",
+                params![ToolCallStatus::Completed.as_str(), output_json, now, id],
+            )
+            .context("record tool call completion")?;
+        if changed != 1 {
+            return Err(anyhow!("tool call {id} does not exist"));
+        }
+        Ok(())
+    }
+
+    /// Marks a tool call failed and stores the failure text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when timestamp formatting or the update fails.
+    pub fn record_tool_call_failed(&self, id: &str, error: &str) -> Result<()> {
+        let now = now_rfc3339()?;
+
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE tool_calls
+                 SET status = ?1, output_json = NULL, error = ?2, completed_at = ?3
+                 WHERE id = ?4",
+                params![ToolCallStatus::Failed.as_str(), error, now, id],
+            )
+            .context("record tool call failure")?;
+        if changed != 1 {
+            return Err(anyhow!("tool call {id} does not exist"));
+        }
+        Ok(())
+    }
+
+    /// Lists persisted tool calls for a session in creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` rejects the query, persisted status data is invalid,
+    /// or persisted JSON cannot be decoded.
+    pub fn session_tool_calls(&self, session_id: &str) -> Result<Vec<ToolCallRecord>> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, session_id, name, input_json, status, output_json, error, created_at,
+                    completed_at
+             FROM tool_calls
+             WHERE session_id = ?1
+             ORDER BY rowid ASC",
+        )?;
+
+        let rows = statement.query_map(params![session_id], |row| {
+            let input_json: String = row.get(3)?;
+            let status: String = row.get(4)?;
+            let output_json: Option<String> = row.get(5)?;
+            Ok(ToolCallRecord {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                name: row.get(2)?,
+                input: decode_json(3, &input_json)?,
+                status: decode_tool_call_status(4, &status)?,
+                output: output_json
+                    .as_deref()
+                    .map(|value| decode_json(5, value))
+                    .transpose()?,
+                error: row.get(6)?,
+                created_at: row.get(7)?,
+                completed_at: row.get(8)?,
+            })
+        })?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("list session tool calls")
+    }
+
     /// Lists recently updated sessions.
     ///
     /// # Errors
@@ -271,6 +434,21 @@ impl SessionStore {
                 CREATE INDEX IF NOT EXISTS idx_turns_session_id ON turns(session_id);
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
 
+                CREATE TABLE IF NOT EXISTS tool_calls (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    input_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+                    output_json TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tool_calls_session_id
+                    ON tool_calls(session_id, created_at);
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
                     session_id UNINDEXED,
                     role UNINDEXED,
@@ -311,6 +489,22 @@ fn decode_role(column: usize, role: &str) -> rusqlite::Result<Role> {
     })
 }
 
+fn decode_tool_call_status(column: usize, status: &str) -> rusqlite::Result<ToolCallStatus> {
+    ToolCallStatus::from_db(status).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(InvalidToolCallStatus(status.to_string())),
+        )
+    })
+}
+
+fn decode_json(column: usize, value: &str) -> rusqlite::Result<Value> {
+    serde_json::from_str(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
+    })
+}
+
 #[derive(Debug)]
 struct InvalidRole(String);
 
@@ -321,6 +515,17 @@ impl fmt::Display for InvalidRole {
 }
 
 impl Error for InvalidRole {}
+
+#[derive(Debug)]
+struct InvalidToolCallStatus(String);
+
+impl fmt::Display for InvalidToolCallStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid tool call status {}", self.0)
+    }
+}
+
+impl Error for InvalidToolCallStatus {}
 
 fn now_rfc3339() -> Result<String> {
     OffsetDateTime::now_utc()

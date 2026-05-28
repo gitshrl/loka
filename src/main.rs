@@ -290,7 +290,7 @@ async fn handle_remember(title: String, body: String, tags: Vec<String>) -> Resu
 }
 
 fn handle_sessions(command: SessionsCommand) -> Result<()> {
-    let state_dir = AppConfig::state_dir_from_env();
+    let state_dir = AppConfig::state_dir_from_env()?;
     let sessions = SessionStore::open(&state_dir)?;
 
     match command {
@@ -389,7 +389,7 @@ async fn handle_skills(command: SkillsCommand) -> Result<()> {
 }
 
 fn handle_skills_list(status: Option<SkillStatusArg>) -> Result<()> {
-    let state_dir = AppConfig::state_dir_from_env();
+    let state_dir = AppConfig::state_dir_from_env()?;
     let skills = SkillStore::open(&state_dir)?;
     for skill in skills.list(status.map(Into::into))? {
         println!(
@@ -408,7 +408,7 @@ fn handle_skills_propose(
     safety_notes: Vec<String>,
     examples: Vec<String>,
 ) -> Result<()> {
-    let state_dir = AppConfig::state_dir_from_env();
+    let state_dir = AppConfig::state_dir_from_env()?;
     let skills = SkillStore::open(&state_dir)?;
     let skill = skills.propose(&SkillDraft {
         name,
@@ -423,7 +423,7 @@ fn handle_skills_propose(
 }
 
 fn handle_skills_enable(id: &str) -> Result<()> {
-    let state_dir = AppConfig::state_dir_from_env();
+    let state_dir = AppConfig::state_dir_from_env()?;
     let skills = SkillStore::open(&state_dir)?;
     let skill = skills.enable(id)?;
     println!("enabled skill {}", skill.id);

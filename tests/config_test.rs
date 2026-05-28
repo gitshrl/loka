@@ -18,6 +18,10 @@ fn config_uses_development_service_defaults() {
         config.model_protocol,
         loka_agent::config::ModelProtocol::OpenAiCompatible
     );
+    assert_eq!(
+        config.memory_lifecycle,
+        loka_agent::config::MemoryLifecycleMode::Off
+    );
     assert_eq!(config.model_api_key, "sk-test");
     assert_eq!(config.state_dir, PathBuf::from(".loka"));
     assert!(config.working_dir.is_absolute());
@@ -43,6 +47,7 @@ memory_base_url = "http://127.0.0.1:9002"
 model = "gpt-file"
 agent_id = "agent-file"
 model_protocol = "anthropic-compatible"
+memory_lifecycle = "strict"
 state_dir = "/srv/loka-state"
 working_dir = "/srv/loka-work"
 "#,
@@ -64,6 +69,10 @@ working_dir = "/srv/loka-work"
         config.model_protocol,
         loka_agent::config::ModelProtocol::AnthropicCompatible
     );
+    assert_eq!(
+        config.memory_lifecycle,
+        loka_agent::config::MemoryLifecycleMode::Strict
+    );
     assert_eq!(config.state_dir, PathBuf::from("/srv/loka-state"));
     assert_eq!(config.working_dir, PathBuf::from("/srv/loka-work"));
 }
@@ -79,6 +88,7 @@ fn env_overrides_home_loka_config_file() {
 model_api_key = "sk-file"
 model = "gpt-file"
 model_protocol = "anthropic-compatible"
+memory_lifecycle = "off"
 working_dir = "/srv/loka-work"
 "#,
     )
@@ -89,6 +99,7 @@ working_dir = "/srv/loka-work"
         "LOKA_MODEL_API_KEY" => Some("sk-env".to_string()),
         "LOKA_MODEL" => Some("gpt-env".to_string()),
         "LOKA_MODEL_PROTOCOL" => Some("anthropic-compatible".to_string()),
+        "LOKA_MEMORY_LIFECYCLE" => Some("strict".to_string()),
         "LOKA_WORKING_DIR" => Some("/tmp/loka-work".to_string()),
         _ => None,
     })
@@ -99,6 +110,10 @@ working_dir = "/srv/loka-work"
     assert_eq!(
         config.model_protocol,
         loka_agent::config::ModelProtocol::AnthropicCompatible
+    );
+    assert_eq!(
+        config.memory_lifecycle,
+        loka_agent::config::MemoryLifecycleMode::Strict
     );
     assert_eq!(config.working_dir, PathBuf::from("/tmp/loka-work"));
 }
@@ -137,6 +152,18 @@ fn config_rejects_unknown_model_protocol() {
     .expect_err("unknown model protocol should fail");
 
     assert!(error.to_string().contains("LOKA_MODEL_PROTOCOL"));
+}
+
+#[test]
+fn config_rejects_unknown_memory_lifecycle() {
+    let error = AppConfig::from_env_map(|key| match key {
+        "LOKA_MODEL_API_KEY" => Some("sk-test".to_string()),
+        "LOKA_MEMORY_LIFECYCLE" => Some("sometimes".to_string()),
+        _ => None,
+    })
+    .expect_err("unknown memory lifecycle should fail");
+
+    assert!(error.to_string().contains("LOKA_MEMORY_LIFECYCLE"));
 }
 
 #[test]

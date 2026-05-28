@@ -142,6 +142,60 @@ async fn chat_summarizes_long_session_as_proposal() {
 }
 
 #[tokio::test]
+async fn strict_chat_syncs_turn_and_ends_session() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
+    let state = tempfile::tempdir().expect("state");
+    let sessions = SessionStore::open(state.path()).expect("sessions");
+
+    model_client.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("capture this");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "Captured." } }
+                ]
+            }));
+    });
+    let turn = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/turns")
+            .body_includes("\"user\":\"capture this\"")
+            .body_includes("\"assistant\":\"Captured.\"")
+            .body_includes("\"agentId\":\"loka-agent\"");
+
+        then.status(202);
+    });
+    let session_end = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/session-end")
+            .body_includes("\"agentId\":\"loka-agent\"");
+
+        then.status(204);
+    });
+
+    let mut config = app_config(&model_client, &memory);
+    config.memory_lifecycle = loka_agent::config::MemoryLifecycleMode::Strict;
+    let agent = Agent::with_session_store(config, sessions);
+
+    let output = agent
+        .chat(ChatSessionRequest {
+            messages: vec!["capture this".to_string()],
+            recall: false,
+        })
+        .await
+        .expect("chat should succeed");
+
+    turn.assert();
+    session_end.assert();
+    assert_eq!(output.answers, vec!["Captured."]);
+}
+
+#[tokio::test]
 async fn chat_requires_at_least_one_message() {
     let memory = MockServer::start();
     let model_client = MockServer::start();
@@ -167,6 +221,7 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

@@ -1,7 +1,10 @@
 use anyhow::{Result, anyhow, bail};
 
-use crate::config::AppConfig;
-use crate::memory::{MemoryClient, MemoryNoteInput};
+use crate::config::{AppConfig, MemoryLifecycleMode};
+use crate::memory::{
+    MemoryClient, MemoryNoteInput, MemoryPrefetchInput, MemorySessionEndInput, MemoryShutdownInput,
+    MemoryTurnInput,
+};
 use crate::messages::{Message, Role, Transcript};
 use crate::model::{ChatRequest, ModelClient};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
@@ -122,6 +125,7 @@ impl Agent {
     pub async fn ask(&self, request: AskRequest) -> Result<AskOutput> {
         let session_id = self.create_session(&request.prompt)?;
         let prompt_session_id = request.session_id.clone().or_else(|| session_id.clone());
+        let sync_session_id = session_id.clone().or_else(|| prompt_session_id.clone());
         let system_prompt = self
             .build_system_prompt(
                 &request.prompt,
@@ -143,12 +147,12 @@ impl Agent {
             })
             .await?;
 
-        self.append_turn(session_id.as_deref(), Role::Assistant, &response.content)?;
+        let answer = response.content;
+        self.append_turn(session_id.as_deref(), Role::Assistant, &answer)?;
+        self.sync_memory_turn(sync_session_id.as_deref(), &request.prompt, &answer)
+            .await?;
 
-        Ok(AskOutput {
-            answer: response.content,
-            session_id,
-        })
+        Ok(AskOutput { answer, session_id })
     }
 
     /// Answers a prompt with streaming deltas while persisting the final assistant text.
@@ -163,6 +167,7 @@ impl Agent {
     {
         let session_id = self.create_session(&request.prompt)?;
         let prompt_session_id = request.session_id.clone().or_else(|| session_id.clone());
+        let sync_session_id = session_id.clone().or_else(|| prompt_session_id.clone());
         let system_prompt = self
             .build_system_prompt(
                 &request.prompt,
@@ -187,12 +192,12 @@ impl Agent {
             )
             .await?;
 
-        self.append_turn(session_id.as_deref(), Role::Assistant, &response.content)?;
+        let answer = response.content;
+        self.append_turn(session_id.as_deref(), Role::Assistant, &answer)?;
+        self.sync_memory_turn(sync_session_id.as_deref(), &request.prompt, &answer)
+            .await?;
 
-        Ok(AskOutput {
-            answer: response.content,
-            session_id,
-        })
+        Ok(AskOutput { answer, session_id })
     }
 
     /// Answers a prompt as the next turn in an existing persisted session.
@@ -250,10 +255,13 @@ impl Agent {
             })
             .await?;
 
-        self.append_turn(Some(session_id), Role::Assistant, &response.content)?;
+        let answer = response.content;
+        self.append_turn(Some(session_id), Role::Assistant, &answer)?;
+        self.sync_memory_turn(Some(session_id), &prompt, &answer)
+            .await?;
 
         Ok(AskOutput {
-            answer: response.content,
+            answer,
             session_id: Some(session_id.to_string()),
         })
     }
@@ -275,6 +283,7 @@ impl Agent {
         let summary_proposal_id = self
             .summarize_session_if_long(&session.session_id, DEFAULT_SUMMARY_MIN_TURNS)
             .await?;
+        self.end_memory_session(&session.session_id).await?;
 
         Ok(ChatSessionOutput {
             session_id: session.session_id,
@@ -347,12 +356,13 @@ impl Agent {
             })
             .await?;
 
-        sessions.append_turn(&session.session_id, Role::Assistant, &response.content)?;
+        let answer = response.content;
+        sessions.append_turn(&session.session_id, Role::Assistant, &answer)?;
         session.transcript.push(user);
-        session
-            .transcript
-            .push(Message::assistant(response.content.clone()));
-        Ok(response.content)
+        session.transcript.push(Message::assistant(answer.clone()));
+        self.sync_memory_turn(Some(&session.session_id), &prompt, &answer)
+            .await?;
+        Ok(answer)
     }
 
     /// Creates a proposal-first memory note.
@@ -404,6 +414,34 @@ impl Agent {
         }
     }
 
+    /// Flushes strict memory lifecycle shutdown work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when strict memory lifecycle is enabled and the memory API rejects
+    /// shutdown.
+    pub async fn shutdown_memory(&self) -> Result<()> {
+        if !self.memory_lifecycle_strict() {
+            return Ok(());
+        }
+
+        self.memory
+            .shutdown(MemoryShutdownInput {
+                agent_id: self.config.agent_id.clone(),
+            })
+            .await
+    }
+
+    /// Runs strict memory lifecycle session-end extraction for an existing session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when strict memory lifecycle is enabled and the memory API rejects
+    /// session-end extraction.
+    pub async fn finish_memory_session(&self, session_id: &str) -> Result<()> {
+        self.end_memory_session(session_id).await
+    }
+
     fn create_session(&self, prompt: &str) -> Result<Option<String>> {
         self.sessions
             .as_ref()
@@ -427,6 +465,44 @@ impl Agent {
             .map(Option::unwrap_or_default)
     }
 
+    fn memory_lifecycle_strict(&self) -> bool {
+        self.config.memory_lifecycle == MemoryLifecycleMode::Strict
+    }
+
+    async fn sync_memory_turn(
+        &self,
+        session_id: Option<&str>,
+        user: &str,
+        assistant: &str,
+    ) -> Result<()> {
+        if !self.memory_lifecycle_strict() {
+            return Ok(());
+        }
+
+        self.memory
+            .sync_turn(MemoryTurnInput {
+                session_id: session_id.map(ToString::to_string),
+                user: user.to_string(),
+                assistant: assistant.to_string(),
+                agent_id: self.config.agent_id.clone(),
+            })
+            .await
+    }
+
+    async fn end_memory_session(&self, session_id: &str) -> Result<()> {
+        if !self.memory_lifecycle_strict() {
+            return Ok(());
+        }
+
+        self.memory
+            .end_session(MemorySessionEndInput {
+                session_id: session_id.to_string(),
+                agent_id: self.config.agent_id.clone(),
+            })
+            .await
+            .map(|_| ())
+    }
+
     async fn build_system_prompt(
         &self,
         prompt: &str,
@@ -435,10 +511,20 @@ impl Agent {
         system_message: Option<String>,
     ) -> Result<String> {
         let memory_markdown = if recall {
-            let memory = self
-                .memory
-                .recall(prompt, RECALL_LIMIT, RECALL_DEPTH)
-                .await?;
+            let memory = if self.memory_lifecycle_strict() {
+                self.memory
+                    .prefetch(MemoryPrefetchInput {
+                        query: prompt.to_string(),
+                        limit: RECALL_LIMIT,
+                        depth: RECALL_DEPTH,
+                        session_id: session_id.clone(),
+                    })
+                    .await?
+            } else {
+                self.memory
+                    .recall(prompt, RECALL_LIMIT, RECALL_DEPTH)
+                    .await?
+            };
             Some(memory.markdown)
         } else {
             None

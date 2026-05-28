@@ -1,10 +1,12 @@
 use futures::future::BoxFuture;
 use httpmock::prelude::*;
+use loka_agent::config::AppConfig;
 use loka_agent::gateway::{
-    GatewayAgent, GatewayRequest, GatewayResponse, GatewaySessionStore, TelegramClient,
-    TelegramGateway, TelegramGatewayOutcome, TelegramUpdate,
+    GatewayAgent, GatewayRequest, GatewayResponse, GatewaySessionStore, LokaGatewayAgent,
+    TelegramClient, TelegramGateway, TelegramGatewayOutcome, TelegramUpdate,
 };
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
@@ -97,6 +99,85 @@ fn gateway_session_store_maps_conversation_to_session() {
         store.session_id("telegram", "123").expect("session lookup"),
         Some("session-1".to_string())
     );
+}
+
+#[tokio::test]
+async fn strict_loka_gateway_prefetches_and_syncs_turn() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
+    let state = tempfile::tempdir().expect("state");
+
+    let rag = memory.mock(|when, then| {
+        when.method(POST).path("/api/rag");
+        then.status(500);
+    });
+    let prefetch = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/prefetch")
+            .body_includes("\"query\":\"hello gateway\"")
+            .body_includes("\"limit\":6")
+            .body_includes("\"depth\":1")
+            .body_includes("\"sessionId\":");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "mode": "prefetch",
+                "markdown": "# Memory Context\n- gateway context"
+            }));
+    });
+    let turn = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/turns")
+            .body_includes("\"user\":\"hello gateway\"")
+            .body_includes("\"assistant\":\"gateway answer\"")
+            .body_includes("\"agentId\":\"loka-agent\"");
+
+        then.status(202);
+    });
+    let completion = model_client.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("gateway context")
+            .body_includes("hello gateway");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "content": "gateway answer" } }
+                ]
+            }));
+    });
+
+    let agent = LokaGatewayAgent::new(AppConfig {
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
+        model: "gpt-5.5".to_string(),
+        agent_id: "loka-agent".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Strict,
+        working_dir: PathBuf::from("/tmp"),
+        state_dir: state.path().to_path_buf(),
+    });
+
+    let response = agent
+        .respond(GatewayRequest {
+            gateway: "telegram".to_string(),
+            conversation_key: "123".to_string(),
+            session_key: "telegram:123".to_string(),
+            text: "hello gateway".to_string(),
+            recall: true,
+        })
+        .await
+        .expect("gateway response");
+
+    prefetch.assert();
+    completion.assert();
+    turn.assert();
+    assert_eq!(rag.calls(), 0);
+    assert_eq!(response.text, "gateway answer");
 }
 
 #[derive(Clone)]

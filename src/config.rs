@@ -43,6 +43,42 @@ impl FromStr for ModelProtocol {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLifecycleMode {
+    Off,
+    Strict,
+}
+
+impl MemoryLifecycleMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+impl fmt::Display for MemoryLifecycleMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MemoryLifecycleMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim() {
+            "off" => Ok(Self::Off),
+            "strict" => Ok(Self::Strict),
+            other => Err(anyhow!(
+                "LOKA_MEMORY_LIFECYCLE must be off or strict, got {other}"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub model_base_url: String,
@@ -51,6 +87,7 @@ pub struct AppConfig {
     pub model: String,
     pub agent_id: String,
     pub model_protocol: ModelProtocol,
+    pub memory_lifecycle: MemoryLifecycleMode,
     pub working_dir: PathBuf,
     pub state_dir: PathBuf,
 }
@@ -63,6 +100,7 @@ struct FileConfig {
     model: Option<String>,
     agent_id: Option<String>,
     model_protocol: Option<String>,
+    memory_lifecycle: Option<String>,
     working_dir: Option<String>,
     state_dir: Option<String>,
     telegram_bot_token: Option<String>,
@@ -194,6 +232,7 @@ impl AppConfig {
                 "loka-agent",
             ),
             model_protocol: get_model_protocol(&get, file.model_protocol.as_deref())?,
+            memory_lifecycle: get_memory_lifecycle(&get, file.memory_lifecycle.as_deref())?,
             working_dir,
             state_dir: get_state_dir(&get, &file),
         })
@@ -209,6 +248,19 @@ where
         "LOKA_MODEL_PROTOCOL",
         file_value,
         ModelProtocol::OpenAiCompatible.as_str(),
+    )
+    .parse()
+}
+
+fn get_memory_lifecycle<F>(get: &F, file_value: Option<&str>) -> Result<MemoryLifecycleMode>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    get_optional(
+        get,
+        "LOKA_MEMORY_LIFECYCLE",
+        file_value,
+        MemoryLifecycleMode::Off.as_str(),
     )
     .parse()
 }

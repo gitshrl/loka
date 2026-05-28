@@ -17,8 +17,8 @@ use std::sync::Arc;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::net::TcpListener;
 
-use crate::config::AppConfig;
-use crate::memory::MemoryClient;
+use crate::config::{AppConfig, MemoryLifecycleMode};
+use crate::memory::{MemoryClient, MemoryPrefetchInput, MemoryTurnInput};
 use crate::messages::{Message, Role, Transcript};
 use crate::model::{ChatRequest, ModelClient};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
@@ -334,6 +334,10 @@ impl LokaGatewayAgent {
         gateway_sessions.upsert(&request.gateway, &request.conversation_key, &session_id)?;
         Ok(session_id)
     }
+
+    fn memory_lifecycle_strict(&self) -> bool {
+        self.config.memory_lifecycle == MemoryLifecycleMode::Strict
+    }
 }
 
 impl GatewayAgent for LokaGatewayAgent {
@@ -348,13 +352,23 @@ impl GatewayAgent for LokaGatewayAgent {
                 let skills = SkillStore::open(&self.config.state_dir)?;
                 skills.enabled_for_prompt(&request.text)?
             };
+            let memory_client = MemoryClient::new(&self.config.memory_base_url);
             let memory_markdown = if request.recall {
-                Some(
-                    MemoryClient::new(&self.config.memory_base_url)
+                let memory = if self.memory_lifecycle_strict() {
+                    memory_client
+                        .prefetch(MemoryPrefetchInput {
+                            query: request.text.clone(),
+                            limit: RECALL_LIMIT,
+                            depth: RECALL_DEPTH,
+                            session_id: Some(session_id.clone()),
+                        })
+                        .await?
+                } else {
+                    memory_client
                         .recall(&request.text, RECALL_LIMIT, RECALL_DEPTH)
                         .await?
-                        .markdown,
-                )
+                };
+                Some(memory.markdown)
             } else {
                 None
             };
@@ -396,14 +410,23 @@ impl GatewayAgent for LokaGatewayAgent {
             })
             .await?;
 
+            let answer = output.content;
             {
                 let sessions = SessionStore::open(&self.config.state_dir)?;
-                sessions.append_turn(&session_id, Role::Assistant, &output.content)?;
+                sessions.append_turn(&session_id, Role::Assistant, &answer)?;
+            }
+            if self.memory_lifecycle_strict() {
+                memory_client
+                    .sync_turn(MemoryTurnInput {
+                        session_id: Some(session_id),
+                        user: request.text,
+                        assistant: answer.clone(),
+                        agent_id: self.config.agent_id.clone(),
+                    })
+                    .await?;
             }
 
-            Ok(GatewayResponse {
-                text: output.content,
-            })
+            Ok(GatewayResponse { text: answer })
         })
     }
 }

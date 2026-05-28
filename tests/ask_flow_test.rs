@@ -53,6 +53,7 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
@@ -69,6 +70,90 @@ async fn ask_with_recall_injects_memory_through_volatile_prompt_layer() {
 
     completion.assert();
     assert_eq!(answer.answer, "Build the ask --recall command.");
+}
+
+#[tokio::test]
+async fn strict_ask_prefetches_and_syncs_completed_turn() {
+    let memory = MockServer::start();
+    let model_client = MockServer::start();
+
+    let rag = memory.mock(|when, then| {
+        when.method(POST).path("/api/rag");
+        then.status(500);
+    });
+    let prefetch = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/prefetch")
+            .json_body(json!({
+                "query": "what next",
+                "limit": 6,
+                "depth": 1,
+                "sessionId": "session-1"
+            }));
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "mode": "prefetch",
+                "markdown": "# Memory Context\n- prefetched context"
+            }));
+    });
+    let turn = memory.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/turns")
+            .json_body(json!({
+                "sessionId": "session-1",
+                "user": "what next",
+                "assistant": "Synced answer.",
+                "agentId": "loka-agent"
+            }));
+
+        then.status(202);
+    });
+
+    let completion = model_client.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/chat/completions")
+            .body_includes("# Memory Recall")
+            .body_includes("prefetched context")
+            .body_includes("what next");
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "choices": [
+                    { "message": { "role": "assistant", "content": "Synced answer." } }
+                ]
+            }));
+    });
+
+    let agent = Agent::new(AppConfig {
+        model_base_url: model_client.base_url(),
+        model_api_key: "sk-test".to_string(),
+        memory_base_url: memory.base_url(),
+        model: "gpt-5.5".to_string(),
+        agent_id: "loka-agent".to_string(),
+        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Strict,
+        working_dir: PathBuf::from("/tmp"),
+        state_dir: PathBuf::from(".test-state"),
+    });
+
+    let answer = agent
+        .ask(AskRequest {
+            prompt: "what next".to_string(),
+            recall: true,
+            session_id: Some("session-1".to_string()),
+            system_message: None,
+        })
+        .await
+        .expect("ask should succeed");
+
+    prefetch.assert();
+    completion.assert();
+    turn.assert();
+    assert_eq!(rag.calls(), 0);
+    assert_eq!(answer.answer, "Synced answer.");
 }
 
 #[tokio::test]
@@ -106,6 +191,7 @@ async fn ask_without_recall_does_not_call_memory_api() {
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     });
@@ -153,6 +239,7 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
             model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+            memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -213,6 +300,7 @@ async fn ask_stream_persists_accumulated_assistant_answer() {
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
             model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+            memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -289,6 +377,7 @@ async fn ask_injects_enabled_matching_skill_context() {
             model: "gpt-5.5".to_string(),
             agent_id: "loka-agent".to_string(),
             model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+            memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },

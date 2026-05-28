@@ -169,6 +169,7 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model: "gpt-5.5".to_string(),
         agent_id: "loka-agent".to_string(),
         model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

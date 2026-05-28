@@ -1,5 +1,8 @@
 use httpmock::prelude::*;
-use loka_agent::memory::{MemoryClient, MemoryNoteInput};
+use loka_agent::memory::{
+    MemoryClient, MemoryNoteInput, MemoryPrefetchInput, MemorySessionEndInput, MemoryShutdownInput,
+    MemoryTurnInput,
+};
 use serde_json::json;
 
 #[tokio::test]
@@ -31,6 +34,127 @@ async fn recall_posts_query_to_memory_api() {
         output.markdown,
         "# Memory Context\n- ship the platform spine"
     );
+}
+
+#[tokio::test]
+async fn prefetch_posts_session_scoped_query_to_memory_api() {
+    let server = MockServer::start();
+    let prefetch = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/prefetch")
+            .json_body(json!({
+                "query": "next work",
+                "limit": 6,
+                "depth": 1,
+                "sessionId": "session-1"
+            }));
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "mode": "prefetch",
+                "markdown": "# Memory Context\n- prefetched"
+            }));
+    });
+
+    let client = MemoryClient::new(server.base_url());
+    let output = client
+        .prefetch(MemoryPrefetchInput {
+            query: "next work".to_string(),
+            limit: 6,
+            depth: 1,
+            session_id: Some("session-1".to_string()),
+        })
+        .await
+        .expect("prefetch should succeed");
+
+    prefetch.assert();
+    assert_eq!(output.markdown, "# Memory Context\n- prefetched");
+}
+
+#[tokio::test]
+async fn sync_turn_posts_completed_turn_to_memory_api() {
+    let server = MockServer::start();
+    let sync = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/turns")
+            .json_body(json!({
+                "sessionId": "session-1",
+                "user": "what next",
+                "assistant": "ship it",
+                "agentId": "loka-agent"
+            }));
+
+        then.status(202);
+    });
+
+    let client = MemoryClient::new(server.base_url());
+    client
+        .sync_turn(MemoryTurnInput {
+            session_id: Some("session-1".to_string()),
+            user: "what next".to_string(),
+            assistant: "ship it".to_string(),
+            agent_id: "loka-agent".to_string(),
+        })
+        .await
+        .expect("turn sync should succeed");
+
+    sync.assert();
+}
+
+#[tokio::test]
+async fn session_end_returns_optional_proposal_id() {
+    let server = MockServer::start();
+    let end = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/session-end")
+            .json_body(json!({
+                "sessionId": "session-1",
+                "agentId": "loka-agent"
+            }));
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "proposalId": "proposal-1"
+            }));
+    });
+
+    let client = MemoryClient::new(server.base_url());
+    let proposal_id = client
+        .end_session(MemorySessionEndInput {
+            session_id: "session-1".to_string(),
+            agent_id: "loka-agent".to_string(),
+        })
+        .await
+        .expect("session end should succeed");
+
+    end.assert();
+    assert_eq!(proposal_id.as_deref(), Some("proposal-1"));
+}
+
+#[tokio::test]
+async fn shutdown_posts_agent_id_to_memory_api() {
+    let server = MockServer::start();
+    let shutdown = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/memory/shutdown")
+            .json_body(json!({
+                "agentId": "loka-agent"
+            }));
+
+        then.status(204);
+    });
+
+    let client = MemoryClient::new(server.base_url());
+    client
+        .shutdown(MemoryShutdownInput {
+            agent_id: "loka-agent".to_string(),
+        })
+        .await
+        .expect("shutdown should succeed");
+
+    shutdown.assert();
 }
 
 #[tokio::test]

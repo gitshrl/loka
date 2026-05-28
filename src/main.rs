@@ -460,7 +460,7 @@ async fn handle_ask(
         let output = agent.ask(request).await?;
         println!("{}", output.answer);
     }
-    Ok(())
+    agent.shutdown_memory().await
 }
 
 async fn handle_chat(recall: bool, messages: Vec<String>) -> Result<()> {
@@ -469,7 +469,7 @@ async fn handle_chat(recall: bool, messages: Vec<String>) -> Result<()> {
     let skills = SkillStore::open(&config.state_dir)?;
     let agent = Agent::with_stores(config, sessions, skills);
 
-    if messages.is_empty() {
+    let result = if messages.is_empty() {
         run_interactive_chat(&agent, recall).await
     } else {
         let output = agent.chat(ChatSessionRequest { messages, recall }).await?;
@@ -481,7 +481,10 @@ async fn handle_chat(recall: bool, messages: Vec<String>) -> Result<()> {
             println!("summary\t{proposal_id}");
         }
         Ok(())
-    }
+    };
+
+    result?;
+    agent.shutdown_memory().await
 }
 
 async fn run_interactive_chat(agent: &Agent, recall: bool) -> Result<()> {
@@ -514,12 +517,15 @@ async fn run_interactive_chat(agent: &Agent, recall: bool) -> Result<()> {
         }
     }
 
-    if let Some(chat) = chat
-        && let Some(proposal_id) = agent
-            .summarize_session_if_long(chat.id(), DEFAULT_SUMMARY_MIN_TURNS)
+    if let Some(chat) = chat {
+        let session_id = chat.id().to_string();
+        if let Some(proposal_id) = agent
+            .summarize_session_if_long(&session_id, DEFAULT_SUMMARY_MIN_TURNS)
             .await?
-    {
-        println!("summary\t{proposal_id}");
+        {
+            println!("summary\t{proposal_id}");
+        }
+        agent.finish_memory_session(&session_id).await?;
     }
 
     Ok(())

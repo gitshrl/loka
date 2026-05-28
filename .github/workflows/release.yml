@@ -52,15 +52,20 @@ jobs:
       matrix:
         include:
           - name: linux-x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
           - name: linux-arm64
             os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
           - name: macos-arm64
             os: macos-15
+            target: aarch64-apple-darwin
           - name: macos-x64
             os: macos-15-intel
+            target: x86_64-apple-darwin
           - name: windows-x64
             os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - name: checkout
@@ -68,17 +73,30 @@ jobs:
         with:
           ref: ${{ inputs.release_tag || github.ref_name }}
 
+      - name: install linux musl linker
+        if: contains(matrix.target, 'linux-musl')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: install rust target
+        run: rustup target add ${{ matrix.target }}
+
       - name: build release binary
-        run: cargo build --locked --release --bin loka
+        run: cargo build --locked --release --bin loka --target ${{ matrix.target }}
+        env:
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
 
       - name: smoke test
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            target/release/loka.exe health
+            target/${{ matrix.target }}/release/loka.exe health
           else
-            target/release/loka health
+            target/${{ matrix.target }}/release/loka health
           fi
 
       - name: package unix binary
@@ -86,13 +104,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          target="$(rustc -vV | sed -n 's/^host: //p')"
+          target="${{ matrix.target }}"
           archive="loka-${target}.tar.gz"
 
-          strip target/release/loka || true
+          strip "target/${target}/release/loka" || true
           rm -rf dist
           mkdir -p dist/loka
-          cp target/release/loka dist/loka/
+          cp "target/${target}/release/loka" dist/loka/
           cp README.md dist/loka/
           tar -C dist -czf "dist/${archive}" loka
 
@@ -107,14 +125,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $target = rustc -vV | Select-String '^host: ' | ForEach-Object {
-            $_.ToString().Substring(6)
-          }
+          $target = "${{ matrix.target }}"
           $archive = "loka-$target.zip"
 
           Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path dist/loka | Out-Null
-          Copy-Item target/release/loka.exe dist/loka/
+          Copy-Item "target/$target/release/loka.exe" dist/loka/
           Copy-Item README.md dist/loka/
           Compress-Archive -Path dist/loka -DestinationPath "dist/$archive" -Force
 

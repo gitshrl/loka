@@ -17,6 +17,9 @@ use loka_agent::runtime::{
     RuntimeExecutor, RuntimeOutput, ServerlessExecutor, SshExecutor,
 };
 use loka_agent::session::SessionStore;
+use loka_agent::session_summary::{
+    SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest,
+};
 use loka_agent::skill_creation::{
     ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
 };
@@ -144,6 +147,17 @@ enum SessionsCommand {
         query: String,
         #[arg(long, default_value_t = 20, help = "Maximum search hits to print")]
         limit: u16,
+    },
+    #[command(about = "summarize one persisted session as a proposal-first memory note")]
+    Summarize {
+        #[arg(help = "Session id to summarize")]
+        session_id: String,
+        #[arg(
+            long,
+            default_value_t = 12,
+            help = "Minimum turns required before summarizing"
+        )]
+        min_turns: usize,
     },
 }
 
@@ -374,7 +388,7 @@ async fn main() -> Result<()> {
         } => handle_ask(prompt, recall, stream, session_id, system_message).await?,
         Command::Chat { recall, messages } => handle_chat(recall, messages).await?,
         Command::Remember { title, body, tags } => handle_remember(title, body, tags).await?,
-        Command::Sessions { command } => handle_sessions(command)?,
+        Command::Sessions { command } => handle_sessions(command).await?,
         Command::Learn { command } => handle_learn(command).await?,
         Command::Tools { command } => handle_tools(command),
         Command::Skills { command } => handle_skills(command).await?,
@@ -508,12 +522,11 @@ async fn handle_remember(title: String, body: String, tags: Vec<String>) -> Resu
     Ok(())
 }
 
-fn handle_sessions(command: SessionsCommand) -> Result<()> {
-    let state_dir = AppConfig::state_dir_from_env()?;
-    let sessions = SessionStore::open(&state_dir)?;
-
+async fn handle_sessions(command: SessionsCommand) -> Result<()> {
     match command {
         SessionsCommand::List { limit } => {
+            let state_dir = AppConfig::state_dir_from_env()?;
+            let sessions = SessionStore::open(&state_dir)?;
             for session in sessions.list_sessions(limit)? {
                 println!(
                     "{}\t{}\t{}\t{} turns",
@@ -522,6 +535,8 @@ fn handle_sessions(command: SessionsCommand) -> Result<()> {
             }
         }
         SessionsCommand::Search { query, limit } => {
+            let state_dir = AppConfig::state_dir_from_env()?;
+            let sessions = SessionStore::open(&state_dir)?;
             for hit in sessions.search(&query, limit)? {
                 println!(
                     "{}\t{}\t{}\t{}",
@@ -530,6 +545,28 @@ fn handle_sessions(command: SessionsCommand) -> Result<()> {
                     hit.title,
                     hit.content.replace('\n', " ")
                 );
+            }
+        }
+        SessionsCommand::Summarize {
+            session_id,
+            min_turns,
+        } => {
+            let config = AppConfig::from_env()?;
+            let sessions = SessionStore::open(&config.state_dir)?;
+            let engine = SessionSummaryEngine::new(config, sessions);
+            match engine
+                .summarize(SessionSummaryRequest {
+                    session_id,
+                    min_turns,
+                })
+                .await?
+            {
+                SessionSummaryOutput::ProposalCreated { proposal_id } => {
+                    println!("created session summary proposal {proposal_id}");
+                }
+                SessionSummaryOutput::TooShort { turn_count } => {
+                    println!("session too short: {turn_count} turns");
+                }
             }
         }
     }

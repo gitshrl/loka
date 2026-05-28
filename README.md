@@ -35,18 +35,25 @@ telegram_bot_token = "telegram-token"
 
 ## Commands
 
+Install the CLI once:
+
 ```bash
-cargo run -- ask --recall --stream "what should i work on next?"
-cargo run -- chat --recall
-cargo run -- sessions search "runtime"
-cargo run -- learn session <session-id>
-cargo run -- learn review
-cargo run -- skills propose --name "Rust review" --trigger "rust review" --instruction "Review code strictly."
-cargo run -- skills propose-from-session <session-id>
-cargo run -- run --agents "ship the next product slice"
-cargo run -- runtime run --backend host -- printf ok
-cargo run -- tui --search runtime
-cargo run -- gateway telegram --addr 127.0.0.1:8787 --path /telegram/webhook
+cargo install --path .
+```
+
+```bash
+loka ask --recall --stream "what should i work on next?"
+loka chat --recall
+loka sessions search "runtime"
+loka sessions summarize <session-id>
+loka learn session <session-id>
+loka learn review
+loka skills propose --name "Rust review" --trigger "rust review" --instruction "Review code strictly."
+loka skills propose-from-session <session-id>
+loka run --agents "ship the next product slice"
+loka runtime run --backend host -- printf ok
+loka tui --search runtime
+loka gateway telegram --addr 127.0.0.1:8787 --path /telegram/webhook
 ```
 
 ## Quality Gates

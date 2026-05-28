@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -12,6 +12,9 @@ use tokio::time::timeout;
 
 use crate::config::AppConfig;
 use crate::learning::{LearnSessionOutput, LearnSessionRequest, learn_from_session};
+use crate::mcp::{
+    McpClient, McpServerConfig, McpTool, is_mcp_tool_name, wrap_untrusted_mcp_content,
+};
 use crate::memory::{MemoryClient, MemoryNoteInput};
 use crate::model::ModelClient;
 use crate::session::SessionStore;
@@ -31,6 +34,7 @@ pub struct ToolResult {
 pub struct ToolRuntime {
     sessions: SessionStore,
     memory: Option<MemoryClient>,
+    mcp: McpRuntime,
     learning: Option<LearningRuntime>,
     agent_id: String,
     host: Option<HostRuntime>,
@@ -41,6 +45,12 @@ struct LearningRuntime {
     config: AppConfig,
     model_client: ModelClient,
     memory: MemoryClient,
+}
+
+#[derive(Debug, Clone, Default)]
+struct McpRuntime {
+    clients: std::collections::BTreeMap<String, McpClient>,
+    tools: std::collections::BTreeMap<String, McpTool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +127,7 @@ impl ToolRuntime {
         Self {
             sessions,
             memory: None,
+            mcp: McpRuntime::default(),
             learning: None,
             agent_id: "loka-agent".to_string(),
             host: None,
@@ -128,6 +139,22 @@ impl ToolRuntime {
         self.memory = Some(memory);
         self.agent_id = agent_id.into();
         self
+    }
+
+    /// Connects an HTTP JSON-RPC MCP server and registers its tools.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the server cannot be reached, returns invalid tools, or exposes a
+    /// tool name already registered through another MCP server.
+    pub async fn with_mcp_server(mut self, config: McpServerConfig) -> Result<Self> {
+        self.mcp.register(config).await?;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn mcp_tools(&self) -> Vec<McpTool> {
+        self.mcp.tools.values().cloned().collect()
     }
 
     #[must_use]
@@ -171,6 +198,7 @@ impl ToolRuntime {
             "git_status" => self.execute_git_status(call.input).await,
             "shell" => self.execute_shell(call.input).await,
             "learn_session" => self.execute_learn_session(call.input).await,
+            name if is_mcp_tool_name(name) => self.execute_mcp_tool(name, call.input).await,
             name => Err(anyhow!("tool {name} has no runtime executor")),
         }
     }
@@ -285,6 +313,16 @@ impl ToolRuntime {
             LearnSessionOutput::NoDurableKnowledge => ToolResult {
                 output: json!({ "status": "no_durable_knowledge" }),
             },
+        })
+    }
+
+    async fn execute_mcp_tool(&self, name: &str, input: Value) -> Result<ToolResult> {
+        let output = self.mcp.call_tool(name, input).await?;
+        Ok(ToolResult {
+            output: json!({
+                "content": wrap_untrusted_mcp_content(name, &output.content),
+                "raw": output.raw,
+            }),
         })
     }
 
@@ -418,6 +456,38 @@ impl ToolRuntime {
         self.host
             .as_ref()
             .ok_or_else(|| anyhow!("host tool requires host workspace configuration"))
+    }
+}
+
+impl McpRuntime {
+    async fn register(&mut self, config: McpServerConfig) -> Result<()> {
+        let client = McpClient::new(config)?;
+        let server = client.server().to_string();
+        if self.clients.contains_key(&server) {
+            bail!("MCP server {server} is already registered");
+        }
+
+        let tools = client.list_tools().await?;
+        for tool in tools {
+            if self.tools.contains_key(&tool.name) {
+                bail!("MCP tool {} is already registered", tool.name);
+            }
+            self.tools.insert(tool.name.clone(), tool);
+        }
+        self.clients.insert(server, client);
+        Ok(())
+    }
+
+    async fn call_tool(&self, name: &str, input: Value) -> Result<crate::mcp::McpToolOutput> {
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| anyhow!("MCP tool {name} is not registered"))?;
+        let client = self
+            .clients
+            .get(&tool.server)
+            .ok_or_else(|| anyhow!("MCP server {} is not registered", tool.server))?;
+        client.call_tool(name, input).await
     }
 }
 

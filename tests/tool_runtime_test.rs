@@ -1,5 +1,6 @@
 use httpmock::prelude::*;
 use loka_agent::config::AppConfig;
+use loka_agent::mcp::McpServerConfig;
 use loka_agent::memory::MemoryClient;
 use loka_agent::messages::Role;
 use loka_agent::session::{SessionStore, ToolCallStatus};
@@ -243,6 +244,85 @@ async fn tool_runtime_executes_learn_session() {
     completion.assert();
     proposal.assert();
     assert_eq!(result.output["proposal_id"], "proposal-learning-tool-1");
+}
+
+#[tokio::test]
+async fn tool_runtime_executes_mcp_tool_as_untrusted_output() {
+    let mcp = MockServer::start();
+    let list = mcp.mock(|when, then| {
+        when.method(POST)
+            .path("/mcp")
+            .body_includes(r#""method":"tools/list""#);
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "lookup",
+                            "description": "Look up external records.",
+                            "inputSchema": { "type": "object" },
+                            "annotations": { "readOnlyHint": true }
+                        }
+                    ]
+                }
+            }));
+    });
+    let call = mcp.mock(|when, then| {
+        when.method(POST).path("/mcp").json_body(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "lookup",
+                "arguments": { "id": "record-1" }
+            }
+        }));
+
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "content": [
+                        { "type": "text", "text": "external result" }
+                    ]
+                }
+            }));
+    });
+
+    let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"))
+        .with_mcp_server(McpServerConfig {
+            name: "records".to_string(),
+            endpoint: format!("{}/mcp", mcp.base_url()),
+        })
+        .await
+        .expect("mcp runtime");
+    let result = runtime
+        .execute(ToolCall {
+            name: "mcp__records__lookup".to_string(),
+            input: json!({ "id": "record-1" }),
+        })
+        .await
+        .expect("mcp tool should succeed");
+
+    list.assert();
+    call.assert();
+    assert_eq!(runtime.mcp_tools().len(), 1);
+    assert!(
+        result.output["content"]
+            .as_str()
+            .expect("content")
+            .contains("<untrusted_content source=\"mcp__records__lookup\">")
+    );
+    assert_eq!(
+        result.output["raw"]["content"][0]["text"],
+        "external result"
+    );
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ fn registry_contains_core_harness_tools() {
     let names = registry
         .list()
         .into_iter()
-        .map(|tool| tool.name)
+        .map(|tool| tool.name.as_str())
         .collect::<Vec<_>>();
 
     assert_eq!(

@@ -658,7 +658,7 @@ fn handle_tools(command: ToolsCommand) {
         ToolsCommand::List => {
             let policy = ApprovalPolicy::default();
             for tool in registry.list() {
-                let decision = policy.evaluate(&registry, tool.name);
+                let decision = policy.evaluate(&registry, &tool.name);
                 println!(
                     "{}\t{}\t{}\t{}",
                     tool.name,

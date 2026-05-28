@@ -12,6 +12,7 @@ This repository is under active product development. The current implementation 
 - skill proposal, enablement, and direct skill runs
 - layered prompt assembly with workspace context discovery
 - tool registry, approval policy checks, and typed tool execution
+- MCP adapter layer for external tool providers
 - supervisor/worker multi-agent runs
 - host, Docker, SSH, cloud VM, and serverless runtime executors
 - Ratatui terminal operator interface

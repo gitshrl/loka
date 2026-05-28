@@ -1,7 +1,10 @@
+use anyhow::{Result, anyhow};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fmt;
+
+use crate::mcp::McpTool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -37,8 +40,8 @@ impl fmt::Display for ToolAccess {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolDefinition {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub access: ToolAccess,
     pub input_schema: Value,
 }
@@ -52,7 +55,7 @@ impl ToolDefinition {
 
 #[derive(Debug, Clone)]
 pub struct ToolRegistry {
-    definitions: BTreeMap<&'static str, ToolDefinition>,
+    definitions: BTreeMap<String, ToolDefinition>,
 }
 
 impl Default for ToolRegistry {
@@ -66,9 +69,37 @@ impl ToolRegistry {
     pub fn built_in() -> Self {
         let mut definitions = BTreeMap::new();
         for definition in built_in_definitions() {
-            definitions.insert(definition.name, definition);
+            definitions.insert(definition.name.clone(), definition);
         }
         Self { definitions }
+    }
+
+    /// Adds externally discovered MCP tools to this registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a discovered tool collides with an existing tool name.
+    pub fn with_mcp_tools(mut self, tools: impl IntoIterator<Item = McpTool>) -> Result<Self> {
+        for tool in tools {
+            self.insert(tool.into_tool_definition())?;
+        }
+        Ok(self)
+    }
+
+    /// Adds a tool definition to this registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name is empty or already registered.
+    pub fn insert(&mut self, definition: ToolDefinition) -> Result<()> {
+        if definition.name.trim().is_empty() {
+            return Err(anyhow!("tool name is required"));
+        }
+        if self.definitions.contains_key(&definition.name) {
+            return Err(anyhow!("tool {} is already registered", definition.name));
+        }
+        self.definitions.insert(definition.name.clone(), definition);
+        Ok(())
     }
 
     #[must_use]
@@ -89,29 +120,29 @@ impl ToolRegistry {
 
 fn built_in_definitions() -> Vec<ToolDefinition> {
     vec![
-        ToolDefinition {
-            name: "session_list",
-            description: "List persisted agent sessions.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(vec![number_property("limit", 1, 200)], &[]),
-        },
-        ToolDefinition {
-            name: "session_search",
-            description: "Search persisted session turns using the indexed session store.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(
+        built_in_tool(
+            "session_list",
+            "List persisted agent sessions.",
+            ToolAccess::Read,
+            object_schema(vec![number_property("limit", 1, 200)], &[]),
+        ),
+        built_in_tool(
+            "session_search",
+            "Search persisted session turns using the indexed session store.",
+            ToolAccess::Read,
+            object_schema(
                 vec![
                     string_property("query", 1),
                     number_property("limit", 1, 200),
                 ],
                 &["query"],
             ),
-        },
-        ToolDefinition {
-            name: "memory_search",
-            description: "Fetch relevant memory context from memory API.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(
+        ),
+        built_in_tool(
+            "memory_search",
+            "Fetch relevant memory context from memory API.",
+            ToolAccess::Read,
+            object_schema(
                 vec![
                     string_property("query", 0),
                     number_property("limit", 1, 20),
@@ -119,12 +150,12 @@ fn built_in_definitions() -> Vec<ToolDefinition> {
                 ],
                 &["query"],
             ),
-        },
-        ToolDefinition {
-            name: "memory_propose",
-            description: "Create a proposal-first memory note in memory API.",
-            access: ToolAccess::Write,
-            input_schema: object_schema(
+        ),
+        built_in_tool(
+            "memory_propose",
+            "Create a proposal-first memory note in memory API.",
+            ToolAccess::Write,
+            object_schema(
                 vec![
                     string_property("title", 1),
                     string_property("body", 1),
@@ -132,47 +163,61 @@ fn built_in_definitions() -> Vec<ToolDefinition> {
                 ],
                 &["title", "body"],
             ),
-        },
-        ToolDefinition {
-            name: "read_file",
-            description: "Read a UTF-8 file from an approved runtime workspace.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(vec![string_property("path", 1)], &["path"]),
-        },
-        ToolDefinition {
-            name: "search_files",
-            description: "Search files in an approved runtime workspace.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(
+        ),
+        built_in_tool(
+            "read_file",
+            "Read a UTF-8 file from an approved runtime workspace.",
+            ToolAccess::Read,
+            object_schema(vec![string_property("path", 1)], &["path"]),
+        ),
+        built_in_tool(
+            "search_files",
+            "Search files in an approved runtime workspace.",
+            ToolAccess::Read,
+            object_schema(
                 vec![string_property("query", 1), string_property("glob", 0)],
                 &["query"],
             ),
-        },
-        ToolDefinition {
-            name: "git_status",
-            description: "Inspect git status in an approved runtime workspace.",
-            access: ToolAccess::Read,
-            input_schema: object_schema(vec![string_property("path", 0)], &[]),
-        },
-        ToolDefinition {
-            name: "shell",
-            description: "Run a shell command in an approved runtime workspace.",
-            access: ToolAccess::Execute,
-            input_schema: object_schema(
+        ),
+        built_in_tool(
+            "git_status",
+            "Inspect git status in an approved runtime workspace.",
+            ToolAccess::Read,
+            object_schema(vec![string_property("path", 0)], &[]),
+        ),
+        built_in_tool(
+            "shell",
+            "Run a shell command in an approved runtime workspace.",
+            ToolAccess::Execute,
+            object_schema(
                 vec![
                     string_property("command", 1),
                     string_property("working_directory", 0),
                 ],
                 &["command"],
             ),
-        },
-        ToolDefinition {
-            name: "learn_session",
-            description: "Extract durable knowledge from a persisted session and write a proposal.",
-            access: ToolAccess::Orchestrate,
-            input_schema: object_schema(vec![string_property("session_id", 1)], &["session_id"]),
-        },
+        ),
+        built_in_tool(
+            "learn_session",
+            "Extract durable knowledge from a persisted session and write a proposal.",
+            ToolAccess::Orchestrate,
+            object_schema(vec![string_property("session_id", 1)], &["session_id"]),
+        ),
     ]
+}
+
+fn built_in_tool(
+    name: &'static str,
+    description: &'static str,
+    access: ToolAccess,
+    input_schema: Value,
+) -> ToolDefinition {
+    ToolDefinition {
+        name: name.to_string(),
+        description: description.to_string(),
+        access,
+        input_schema,
+    }
 }
 
 fn object_schema(properties: Vec<(&'static str, Value)>, required: &[&'static str]) -> Value {

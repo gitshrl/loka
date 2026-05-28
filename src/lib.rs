@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod gateway;
 pub mod learning;
+pub mod mcp;
 pub mod memory;
 pub mod messages;
 pub mod model;

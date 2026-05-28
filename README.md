@@ -28,28 +28,11 @@ Current implementation:
 
 ## Install
 
-Download a binary archive from the latest GitHub release:
-
-- Linux x64: `loka-x86_64-unknown-linux-musl.tar.gz`
-- Linux ARM64: `loka-aarch64-unknown-linux-musl.tar.gz`
-- macOS Apple Silicon: `loka-aarch64-apple-darwin.tar.gz`
-- macOS Intel: `loka-x86_64-apple-darwin.tar.gz`
-- Windows x64: `loka-x86_64-pc-windows-msvc.zip`
-
-Linux x64:
-
-```bash
-curl -L https://github.com/gitshrl/loka/releases/latest/download/loka-x86_64-unknown-linux-musl.tar.gz -o loka.tar.gz
-tar -xzf loka.tar.gz
-mkdir -p ~/.local/bin
-install -m 755 loka/loka ~/.local/bin/loka
-loka health
-```
-
-From source:
+Install from source:
 
 ```bash
 cargo install --path .
+loka health
 ```
 
 ## Configuration

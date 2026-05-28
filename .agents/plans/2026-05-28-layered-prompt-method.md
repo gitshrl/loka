@@ -42,8 +42,8 @@ Files:
 - `src/prompt.rs`
 - `src/agent.rs`
 - `src/gateway.rs`
-- `tests/prompt_builder_test.rs`
-- `tests/ask_flow_test.rs`
+- `tests/prompt_builder.rs`
+- `tests/ask_flow.rs`
 
 Data flow:
 
@@ -120,8 +120,8 @@ No concrete model service names belong in prompt metadata.
 Required tests:
 
 ```bash
-rtk cargo test --test prompt_builder_test
-rtk cargo test --test ask_flow_test
+rtk cargo test --test prompt_builder
+rtk cargo test --test ask_flow
 ```
 
 Required full gates:
@@ -130,7 +130,5 @@ Required full gates:
 rtk cargo test
 rtk cargo clippy --all-targets --all-features -- -D warnings
 rtk cargo fmt --all --check
-rtk rg -n -i "forbidden concrete service names" src tests README.md .agents/plans
+rtk rg -n -i "<retired integration name pattern>" src tests README.md Cargo.toml rust-toolchain.toml evals .agents/plans/2026-05-28-rust-agent-workflow.md .agents/plans/2026-05-28-layered-prompt-method.md
 ```
-
-The final search must return no matches.

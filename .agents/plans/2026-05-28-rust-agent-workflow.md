@@ -30,7 +30,8 @@ External integrations sit behind adapters:
 
 - Model API adapter: `openai-compatible` or `anthropic-compatible`.
 - Memory API adapter: recall, proposal-first write, and pending proposal list.
-- Future MCP skill adapters: loaded as tools, not compiled into the core domain.
+- MCP adapter: external tools are loaded through JSON-RPC tool discovery and
+  execution, then exposed through the same approval policy as built-in tools.
 
 Concrete third-party product names are forbidden in `src/`, `tests/`, and
 `README.md`. Use generic model, memory, runtime, skill, and gateway language.
@@ -45,10 +46,11 @@ model_base_url = "http://127.0.0.1:8317"
 model_api_key = "sk-development-example"
 model_protocol = "openai-compatible" # or "anthropic-compatible"
 memory_base_url = "http://127.0.0.1:4321"
+memory_lifecycle = "off" # or "strict"
 model = "gpt-5.5"
 agent_id = "loka-agent"
 state_dir = "/home/dev/.loka"
-working_dir = "/home/dev/code/lab/loka"
+working_dir = "/home/dev/.loka/workspace"
 telegram_bot_token = "telegram-token"
 ```
 
@@ -59,6 +61,7 @@ LOKA_MODEL_BASE_URL
 LOKA_MODEL_API_KEY
 LOKA_MODEL_PROTOCOL
 LOKA_MEMORY_BASE_URL
+LOKA_MEMORY_LIFECYCLE
 LOKA_MODEL
 LOKA_AGENT_ID
 LOKA_STATE_DIR
@@ -97,6 +100,7 @@ loka skills propose --name "Rust review" --trigger "rust review" --instruction "
 loka skills propose-from-session <session-id>
 loka run --agents "ship the next product slice"
 loka runtime run --backend host -- printf ok
+loka eval validate
 loka tui --search runtime
 loka gateway telegram --addr 127.0.0.1:8787 --path /telegram/webhook
 ```
@@ -113,9 +117,17 @@ Built-in tools:
 - `shell`
 - `learn_session`
 
+Eval fixtures:
+
+- `evals/fixtures/ask.json`
+- `evals/fixtures/chat.json`
+- `evals/fixtures/learning.json`
+- `evals/fixtures/skill-creation.json`
+- `evals/fixtures/multi-agent.json`
+
 ## Implementation Tasks
 
-- [x] Bootstrap Rust 2024 crate with Rust `1.96`.
+- [x] Bootstrap Rust 2024 crate with Rust `1.95.0`.
 - [x] Add CLI command tree with direct `loka ...` binary support.
 - [x] Load config from `~/.loka/config.toml` plus environment overrides.
 - [x] Add `ModelProtocol` with only `openai-compatible` and
@@ -132,23 +144,32 @@ Built-in tools:
 - [x] Add typed runtime execution for host, Docker, SSH, cloud VM, and serverless.
 - [x] Add supervisor/worker multi-agent runtime.
 - [x] Add TUI and Telegram gateway.
-- [ ] Add explicit MCP adapter layer for external tool/skill providers.
-- [ ] Add memory provider lifecycle hooks for prefetch, post-turn sync,
+- [x] Add explicit MCP adapter layer for external tool/skill providers.
+- [x] Add memory provider lifecycle hooks for prefetch, post-turn sync,
   session-end extraction, and shutdown.
-- [ ] Add token budget accounting for prompt, tool, worker, and session scopes.
-- [ ] Add eval fixtures for ask, chat, learning, skill creation, and multi-agent
+- [x] Add token budget accounting for prompt, tool, worker, and session scopes.
+- [x] Add eval fixtures for ask, chat, learning, skill creation, and multi-agent
   runs.
 
 ## Verification
 
-Required gates before claiming completion:
+Final gates run after implementation:
 
 ```bash
 rtk cargo test
 rtk cargo clippy --all-targets --all-features -- -D warnings
 rtk cargo fmt --all --check
 rtk proxy git diff --check
-rtk rg -n -i "forbidden concrete service names" src tests README.md .agents/plans
+rtk /home/dev/.cargo/bin/loka health
+rtk /home/dev/.cargo/bin/loka eval validate
+rtk rg -n -i "<retired integration name pattern>" src tests README.md Cargo.toml rust-toolchain.toml evals .agents/plans/2026-05-28-rust-agent-workflow.md .agents/plans/2026-05-28-layered-prompt-method.md
 ```
 
-The final search must return no matches.
+Results:
+
+- `cargo test`: 100 passed.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo fmt --all --check`: clean.
+- `loka health`: `ok`.
+- `loka eval validate`: validated 5 eval fixtures.
+- Forbidden-name search: no matches.

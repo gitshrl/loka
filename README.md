@@ -1,17 +1,23 @@
 # Loka
 
-Loka is a personal agent platform for CLI/TUI workflows, session search, learning loops, reusable skills, multi-agent runs, messaging gateways, and portable runtimes.
+Loka is a personal agent platform for CLI/TUI workflows, session search,
+built-in learning loops, reusable skills, multi-agent runs, messaging gateways,
+and portable runtimes.
+
+It is built around a small control plane: typed model adapters, durable session
+state, proposal-first memory writes, bounded worker agents, and explicit runtime
+execution contracts.
 
 ## Status
 
 This repository is under active product development. The current implementation includes:
 
 - `ask`, `chat`, and proposal-first `remember`
-- persisted sessions with SQLite FTS search
-- built-in learning proposals from sessions
-- skill proposal, enablement, and direct skill runs
+- persisted sessions with SQLite FTS search, summaries, and token usage records
+- built-in learning proposals from completed sessions
+- skill proposal, enablement, creation from sessions, and direct skill runs
 - layered prompt assembly with workspace context discovery
-- tool registry, approval policy checks, and typed tool execution
+- tool registry, approval policy checks, typed tool execution, and tool-call transcripts
 - token accounting across prompts, tools, sessions, and workers
 - typed eval fixtures for ask, chat, learning, skill creation, and multi-agent runs
 - MCP adapter layer for external tool providers
@@ -37,6 +43,17 @@ working_dir = "/home/dev/.loka/workspace"
 telegram_bot_token = "telegram-token"
 ```
 
+Supported model protocols:
+
+- `openai-compatible`
+- `anthropic-compatible`
+
+`memory_lifecycle = "strict"` enables memory prefetch, post-turn sync,
+session-end extraction, and shutdown hooks. `memory_lifecycle = "off"` keeps
+memory calls explicit.
+
+State defaults to `~/.loka`. The default workspace is `~/.loka/workspace`.
+
 ## Commands
 
 Install the CLI once:
@@ -59,6 +76,13 @@ loka runtime run --backend host -- printf ok
 loka eval validate
 loka tui --search runtime
 loka gateway telegram --addr 127.0.0.1:8787 --path /telegram/webhook
+```
+
+Eval fixtures live in `evals/fixtures`:
+
+```bash
+loka eval list
+loka eval validate
 ```
 
 ## Quality Gates

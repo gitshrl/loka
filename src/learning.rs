@@ -3,7 +3,8 @@ use anyhow::{Result, anyhow};
 use crate::config::AppConfig;
 use crate::llm::{ChatRequest, LlmClient};
 use crate::messages::Message;
-use crate::session::{SessionStore, SessionTurn};
+use crate::session::{SessionStore, SessionTurn, ToolCallRecord};
+use crate::session_context::format_session_context;
 use crate::wiki::{NoteInput, PendingProposal, WikiClient};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,13 +49,18 @@ impl LearningEngine {
             return Err(anyhow!("session {} has no turns", request.session_id));
         }
 
+        let tool_calls = self.sessions.session_tool_calls(&request.session_id)?;
         let extraction = self
             .llm
             .chat(ChatRequest {
                 model: self.config.model.clone(),
                 messages: vec![
                     Message::system(learning_system_prompt()),
-                    Message::user(format_session_for_learning(&request.session_id, &turns)),
+                    Message::user(format_session_for_learning(
+                        &request.session_id,
+                        &turns,
+                        &tool_calls,
+                    )),
                 ],
             })
             .await?;
@@ -101,19 +107,10 @@ fn learning_system_prompt() -> &'static str {
     "Extract only durable knowledge from this session: user preferences, project facts, decisions, recurring workflows, or tool failures. Return concise markdown. If there is nothing durable, return exactly NONE."
 }
 
-fn format_session_for_learning(session_id: &str, turns: &[SessionTurn]) -> String {
-    let mut output =
-        String::with_capacity(256 + turns.iter().map(|turn| turn.content.len()).sum::<usize>());
-    output.push_str("Session id: ");
-    output.push_str(session_id);
-    output.push_str("\n\n");
-
-    for turn in turns {
-        output.push_str(turn.role.as_str());
-        output.push_str(": ");
-        output.push_str(turn.content.trim());
-        output.push_str("\n\n");
-    }
-
-    output
+fn format_session_for_learning(
+    session_id: &str,
+    turns: &[SessionTurn],
+    tool_calls: &[ToolCallRecord],
+) -> String {
+    format_session_context(session_id, turns, tool_calls)
 }

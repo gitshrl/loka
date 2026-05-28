@@ -9,6 +9,7 @@ pub mod permissions;
 pub mod prompt;
 pub mod runtime;
 pub mod session;
+mod session_context;
 pub mod session_summary;
 pub mod skill_creation;
 pub mod skills;

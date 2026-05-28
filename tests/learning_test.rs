@@ -28,11 +28,18 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
             "Decision captured: Rust owns orchestration, memory stays in personal-wiki.",
         )
         .expect("assistant turn");
+    let tool_call_id = sessions
+        .record_tool_call_started(&session_id, "shell", &json!({ "command": "cargo clippy" }))
+        .expect("tool call");
+    sessions
+        .record_tool_call_failed(&tool_call_id, "clippy failed on unwrap")
+        .expect("failed tool call");
 
     let extraction = llm.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("We decided Loka should use Rust")
+            .body_includes("clippy failed on unwrap")
             .body_includes("Extract only durable knowledge");
 
         then.status(200)

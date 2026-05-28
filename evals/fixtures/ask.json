@@ -1,0 +1,24 @@
+{
+  "id": "ask.workspace-next-step",
+  "title": "Ask uses layered context and recall",
+  "tags": ["ask", "prompt", "memory"],
+  "kind": "ask",
+  "prompt": "what should i ship next?",
+  "recall": true,
+  "system_message": "Prefer direct engineering answers.",
+  "memory_context": [
+    "Decision: providers are openai-compatible or anthropic-compatible.",
+    "Preference: propose durable notes before writing memory."
+  ],
+  "expectations": {
+    "prompt_markers": [
+      "# Loka Identity",
+      "# Runtime State",
+      "# Memory Recall",
+      "what should i ship next?"
+    ],
+    "forbidden_prompt_markers": ["secret", "api key"],
+    "output_markers": ["next product slice"],
+    "max_prompt_tokens": 1600
+  }
+}

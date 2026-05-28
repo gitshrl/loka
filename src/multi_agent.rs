@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use futures::future::join_all;
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -25,7 +25,7 @@ use crate::tokens::{
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentProfile {
     Supervisor,
@@ -106,7 +106,7 @@ pub struct WorkerRunOutput {
     pub tokens_used: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskStatus {
     Pending,

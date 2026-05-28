@@ -1,0 +1,37 @@
+{
+  "id": "learning.proposal-first-session-note",
+  "title": "Learning extracts durable knowledge as a proposal",
+  "tags": ["learning", "memory", "proposal"],
+  "kind": "learning",
+  "session_id": "fixture-learning-session",
+  "session_turns": [
+    {
+      "role": "user",
+      "content": "when runtime commands fail, preserve stderr in the session"
+    },
+    {
+      "role": "assistant",
+      "content": "decision captured: failed runtime commands keep stderr for later search"
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "runtime.run",
+      "input": {
+        "backend": "host",
+        "command": ["cargo", "test"]
+      },
+      "status": "failed",
+      "error": "command exited with 101"
+    }
+  ],
+  "expectations": {
+    "prompt_markers": [
+      "Extract only durable knowledge",
+      "fixture-learning-session",
+      "command exited with 101"
+    ],
+    "output_markers": ["failed runtime commands keep stderr"],
+    "memory_tags": ["learning", "session"]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "skill-creation.review-workflow",
+  "title": "Skill creation turns repeated workflow into a proposal",
+  "tags": ["skill", "proposal", "session"],
+  "kind": "skill-creation",
+  "session_id": "fixture-skill-session",
+  "session_turns": [
+    {
+      "role": "user",
+      "content": "when i ask for a rust review, inspect the diff and run fmt, tests, and clippy"
+    },
+    {
+      "role": "assistant",
+      "content": "reusable workflow: inspect changes, run format/test/lint, report correctness risks first"
+    }
+  ],
+  "expectations": {
+    "prompt_markers": [
+      "Create exactly one Loka skill proposal",
+      "strict JSON",
+      "fixture-skill-session"
+    ],
+    "skill": {
+      "name": "Rust review",
+      "trigger": "rust review",
+      "instructions": "Inspect the requested diff, run format, tests, and lint gates, then report correctness risks first.",
+      "required_tools": ["read_file", "search_files", "shell"],
+      "safety_notes": ["Do not run destructive git commands."],
+      "examples": ["rust review src/main.rs"]
+    }
+  }
+}

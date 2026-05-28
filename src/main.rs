@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest, DEFAULT_SUMMARY_MIN_TURNS};
 use loka_agent::config::AppConfig;
+use loka_agent::evals::{DEFAULT_FIXTURE_DIR, EvalFixture, load_fixtures, validate_fixtures};
 use loka_agent::gateway::run_telegram_gateway;
 use loka_agent::learning::{
     LearnSessionOutput, LearnSessionRequest, LearningEngine, pending_learning_proposals,
@@ -30,7 +31,7 @@ use loka_agent::tui::{TuiApp, run_tui};
 use std::fmt;
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 #[command(name = "loka")]
@@ -117,6 +118,11 @@ enum Command {
     Runtime {
         #[command(subcommand)]
         command: RuntimeCliCommand,
+    },
+    #[command(about = "inspect and validate eval fixtures")]
+    Eval {
+        #[command(subcommand)]
+        command: EvalCommand,
     },
     #[command(about = "open the terminal operator interface")]
     Tui {
@@ -261,6 +267,20 @@ enum RuntimeCliCommand {
         timeout_seconds: u64,
         #[arg(last = true, required = true, help = "Command and arguments after --")]
         command: Vec<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EvalCommand {
+    #[command(about = "list eval fixtures")]
+    List {
+        #[arg(long, default_value = DEFAULT_FIXTURE_DIR, help = "Fixture directory")]
+        path: PathBuf,
+    },
+    #[command(about = "validate eval fixtures")]
+    Validate {
+        #[arg(long, default_value = DEFAULT_FIXTURE_DIR, help = "Fixture directory")]
+        path: PathBuf,
     },
 }
 
@@ -411,6 +431,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Command::Runtime { command } => handle_runtime(command).await?,
+        Command::Eval { command } => handle_eval(command)?,
         Command::Tui { search, limit } => handle_tui(&search, limit)?,
         Command::Gateway { command } => handle_gateway(command).await?,
         Command::Health => {
@@ -892,6 +913,27 @@ async fn handle_runtime(command: RuntimeCliCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_eval(command: EvalCommand) -> Result<()> {
+    match command {
+        EvalCommand::List { path } => {
+            for fixture in load_valid_eval_fixtures(&path)? {
+                println!("{}\t{}\t{}", fixture.id, fixture.kind(), fixture.title);
+            }
+        }
+        EvalCommand::Validate { path } => {
+            let fixtures = load_valid_eval_fixtures(&path)?;
+            println!("validated {} eval fixtures", fixtures.len());
+        }
+    }
+    Ok(())
+}
+
+fn load_valid_eval_fixtures(path: &Path) -> Result<Vec<EvalFixture>> {
+    let fixtures = load_fixtures(path)?;
+    validate_fixtures(&fixtures)?;
+    Ok(fixtures)
 }
 
 fn runtime_command_from_args(

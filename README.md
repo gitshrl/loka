@@ -13,6 +13,7 @@ This repository is under active product development. The current implementation 
 - layered prompt assembly with workspace context discovery
 - tool registry, approval policy checks, and typed tool execution
 - token accounting across prompts, tools, sessions, and workers
+- typed eval fixtures for ask, chat, learning, skill creation, and multi-agent runs
 - MCP adapter layer for external tool providers
 - supervisor/worker multi-agent runs
 - host, Docker, SSH, cloud VM, and serverless runtime executors
@@ -55,6 +56,7 @@ loka skills propose --name "Rust review" --trigger "rust review" --instruction "
 loka skills propose-from-session <session-id>
 loka run --agents "ship the next product slice"
 loka runtime run --backend host -- printf ok
+loka eval validate
 loka tui --search runtime
 loka gateway telegram --addr 127.0.0.1:8787 --path /telegram/webhook
 ```

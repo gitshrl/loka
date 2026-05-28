@@ -1,0 +1,52 @@
+{
+  "id": "multi-agent.bounded-workers",
+  "title": "Multi-agent run isolates bounded worker sessions",
+  "tags": ["multi-agent", "workers", "budget"],
+  "kind": "multi-agent",
+  "objective": "ship a durable eval fixture layer",
+  "recall": true,
+  "max_workers": 3,
+  "workers": [
+    {
+      "profile": "planner",
+      "objective": "decompose the eval fixture work into ordered slices",
+      "output_format": "concise plan with sequencing, dependencies, and risks",
+      "tools_allowed": ["session_search", "memory_search"],
+      "max_iterations": 3,
+      "max_tokens": 2000,
+      "timeout_seconds": 30,
+      "justification": "planning reduces implementation churn before code changes"
+    },
+    {
+      "profile": "reviewer",
+      "objective": "review the fixture schema for product risk and test coverage",
+      "output_format": "findings ordered by severity",
+      "tools_allowed": ["read_file", "search_files"],
+      "max_iterations": 2,
+      "max_tokens": 1500,
+      "timeout_seconds": 30,
+      "justification": "review catches schema drift and weak assertions"
+    }
+  ],
+  "expectations": {
+    "prompt_markers": [
+      "Supervisor synthesis",
+      "Do not include private worker scratchpads"
+    ],
+    "output_markers": ["fixture layer"],
+    "workers": [
+      {
+        "profile": "planner",
+        "status": "succeeded",
+        "output_markers": ["sequencing"],
+        "max_tokens": 2000
+      },
+      {
+        "profile": "reviewer",
+        "status": "succeeded",
+        "output_markers": ["findings"],
+        "max_tokens": 1500
+      }
+    ]
+  }
+}

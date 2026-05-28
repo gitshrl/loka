@@ -1,0 +1,21 @@
+{
+  "id": "chat.session-searchable-history",
+  "title": "Chat persists searchable multi-turn history",
+  "tags": ["chat", "sessions", "search"],
+  "kind": "chat",
+  "messages": [
+    "plan the next runtime backend work",
+    "turn that into a concrete implementation order"
+  ],
+  "recall": true,
+  "summary_min_turns": 12,
+  "expectations": {
+    "prompt_markers": [
+      "# Loka Identity",
+      "# Session Context",
+      "plan the next runtime backend work"
+    ],
+    "output_markers": ["implementation order"],
+    "max_prompt_tokens": 2400
+  }
+}

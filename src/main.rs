@@ -11,6 +11,10 @@ use loka_agent::multi_agent::{
     AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, WorkerSpec,
 };
 use loka_agent::permissions::{ApprovalPolicy, PermissionMode};
+use loka_agent::runtime::{
+    CloudVmExecutor, DockerExecutor, HostExecutor, RuntimeCommand as ExecutorCommand,
+    RuntimeExecutor, RuntimeOutput, ServerlessExecutor, SshExecutor,
+};
 use loka_agent::session::SessionStore;
 use loka_agent::skill_creation::{
     ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
@@ -20,6 +24,7 @@ use loka_agent::tools::ToolRegistry;
 use loka_agent::wiki::WikiClient;
 use std::fmt;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "loka")]
@@ -99,6 +104,11 @@ enum Command {
         max_workers: usize,
         #[arg(long, default_value_t = 90, help = "Per-worker timeout in seconds")]
         timeout_seconds: u64,
+    },
+    #[command(about = "run commands on configured runtime backends")]
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCliCommand,
     },
     #[command(about = "check whether the CLI can start")]
     Health,
@@ -190,6 +200,58 @@ enum SkillsCommand {
         #[arg(help = "Input for the skill")]
         input: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum RuntimeCliCommand {
+    #[command(about = "run one command on a runtime backend")]
+    Run {
+        #[arg(long, default_value_t = RuntimeBackendArg::Host, help = "Runtime backend")]
+        backend: RuntimeBackendArg,
+        #[arg(long, help = "Docker image for the docker backend")]
+        image: Option<String>,
+        #[arg(long, help = "SSH target for ssh or cloud-vm backends")]
+        target: Option<String>,
+        #[arg(long, help = "Serverless command endpoint")]
+        endpoint: Option<String>,
+        #[arg(long, help = "Host workspace to mount into Docker")]
+        workspace: Option<PathBuf>,
+        #[arg(
+            long,
+            default_value = ".",
+            help = "Remote working directory for SSH backends"
+        )]
+        remote_dir: String,
+        #[arg(long, help = "Bootstrap shell snippet for cloud-vm backend")]
+        bootstrap: Option<String>,
+        #[arg(long = "env", help = "Environment variable as KEY=VALUE")]
+        env: Vec<String>,
+        #[arg(long, default_value_t = 30, help = "Command timeout in seconds")]
+        timeout_seconds: u64,
+        #[arg(last = true, required = true, help = "Command and arguments after --")]
+        command: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RuntimeBackendArg {
+    Host,
+    Docker,
+    Ssh,
+    CloudVm,
+    Serverless,
+}
+
+impl fmt::Display for RuntimeBackendArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Host => "host",
+            Self::Docker => "docker",
+            Self::Ssh => "ssh",
+            Self::CloudVm => "cloud-vm",
+            Self::Serverless => "serverless",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -297,6 +359,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::Runtime { command } => handle_runtime(command).await?,
         Command::Health => {
             println!("ok");
         }
@@ -635,6 +698,101 @@ async fn handle_run(
     }
     println!("\nsynthesis\n{}", output.synthesis);
 
+    Ok(())
+}
+
+async fn handle_runtime(command: RuntimeCliCommand) -> Result<()> {
+    match command {
+        RuntimeCliCommand::Run {
+            backend,
+            image,
+            target,
+            endpoint,
+            workspace,
+            remote_dir,
+            bootstrap,
+            env,
+            timeout_seconds,
+            command,
+        } => {
+            let runtime_command = runtime_command_from_args(command, env, timeout_seconds)?;
+            let output = match backend {
+                RuntimeBackendArg::Host => HostExecutor::new().run(runtime_command).await?,
+                RuntimeBackendArg::Docker => {
+                    let image = image.ok_or_else(|| anyhow::anyhow!("--image is required"))?;
+                    DockerExecutor::new(image, workspace.as_ref())?
+                        .run(runtime_command)
+                        .await?
+                }
+                RuntimeBackendArg::Ssh => {
+                    let target = target.ok_or_else(|| anyhow::anyhow!("--target is required"))?;
+                    SshExecutor::new(target, remote_dir)
+                        .run(runtime_command)
+                        .await?
+                }
+                RuntimeBackendArg::CloudVm => {
+                    let target = target.ok_or_else(|| anyhow::anyhow!("--target is required"))?;
+                    CloudVmExecutor::new(target, remote_dir, bootstrap)
+                        .run(runtime_command)
+                        .await?
+                }
+                RuntimeBackendArg::Serverless => {
+                    let endpoint =
+                        endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required"))?;
+                    ServerlessExecutor::new(endpoint)?
+                        .run(runtime_command)
+                        .await?
+                }
+            };
+            print_runtime_output(&output)?;
+        }
+    }
+    Ok(())
+}
+
+fn runtime_command_from_args(
+    command: Vec<String>,
+    env: Vec<String>,
+    timeout_seconds: u64,
+) -> Result<ExecutorCommand> {
+    let mut command = command.into_iter();
+    let program = command
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("runtime command is required"))?;
+    Ok(ExecutorCommand {
+        program,
+        args: command.collect(),
+        working_dir: None,
+        env: parse_env_pairs(env)?,
+        stdin: None,
+        timeout_seconds: Some(timeout_seconds),
+    })
+}
+
+fn parse_env_pairs(values: Vec<String>) -> Result<Vec<(String, String)>> {
+    values
+        .into_iter()
+        .map(|value| {
+            let (key, value) = value
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("environment value must use KEY=VALUE"))?;
+            Ok((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+fn print_runtime_output(output: &RuntimeOutput) -> Result<()> {
+    print!("{}", output.stdout);
+    io::stdout().flush()?;
+    eprint!("{}", output.stderr);
+    io::stderr().flush()?;
+
+    if output.timed_out {
+        anyhow::bail!("runtime command timed out");
+    }
+    if output.status != 0 {
+        anyhow::bail!("runtime command exited with {}", output.status);
+    }
     Ok(())
 }
 

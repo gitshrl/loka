@@ -21,6 +21,7 @@ use loka_agent::skill_creation::{
 };
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
 use loka_agent::tools::ToolRegistry;
+use loka_agent::tui::{TuiApp, run_tui};
 use loka_agent::wiki::WikiClient;
 use std::fmt;
 use std::io::{self, Write};
@@ -109,6 +110,13 @@ enum Command {
     Runtime {
         #[command(subcommand)]
         command: RuntimeCliCommand,
+    },
+    #[command(about = "open the terminal operator interface")]
+    Tui {
+        #[arg(long, default_value = "", help = "Initial session search query")]
+        search: String,
+        #[arg(long, default_value_t = 20, help = "Maximum search hits to load")]
+        limit: u16,
     },
     #[command(about = "check whether the CLI can start")]
     Health,
@@ -360,6 +368,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Command::Runtime { command } => handle_runtime(command).await?,
+        Command::Tui { search, limit } => handle_tui(&search, limit)?,
         Command::Health => {
             println!("ok");
         }
@@ -476,6 +485,13 @@ fn handle_sessions(command: SessionsCommand) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn handle_tui(search: &str, limit: u16) -> Result<()> {
+    let state_dir = AppConfig::state_dir_from_env()?;
+    let sessions = SessionStore::open(&state_dir)?;
+    let mut app = TuiApp::from_sessions(&sessions, search, limit)?;
+    run_tui(&mut app)
 }
 
 async fn handle_learn(command: LearnCommand) -> Result<()> {

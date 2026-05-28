@@ -12,4 +12,5 @@ pub mod skill_creation;
 pub mod skills;
 pub mod tool_runtime;
 pub mod tools;
+pub mod tui;
 pub mod wiki;

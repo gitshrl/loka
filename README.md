@@ -30,7 +30,7 @@ agent_id = "loka-agent"
 model_protocol = "openai-compatible"
 memory_lifecycle = "off"
 state_dir = "/home/dev/.loka"
-working_dir = "/home/dev/code/lab/loka"
+working_dir = "/home/dev/.loka/workspace"
 telegram_bot_token = "telegram-token"
 ```
 

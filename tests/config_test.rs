@@ -24,13 +24,33 @@ fn config_uses_development_service_defaults() {
     );
     assert_eq!(config.model_api_key, "sk-test");
     assert_eq!(config.state_dir, PathBuf::from(".loka"));
-    assert!(config.working_dir.is_absolute());
+    assert_eq!(
+        config.working_dir,
+        std::env::current_dir()
+            .expect("current dir")
+            .join(".loka")
+            .join("workspace")
+    );
 }
 
 #[test]
 fn config_requires_model_api_key() {
     let error = AppConfig::from_env_map(|_| None).expect_err("missing key should fail");
     assert!(error.to_string().contains("LOKA_MODEL_API_KEY"));
+}
+
+#[test]
+fn config_defaults_working_dir_to_home_loka_workspace() {
+    let home = tempfile::tempdir().expect("home");
+    let config = AppConfig::from_env_map(|key| match key {
+        "HOME" => Some(home.path().display().to_string()),
+        "LOKA_MODEL_API_KEY" => Some("sk-test".to_string()),
+        _ => None,
+    })
+    .expect("config should load");
+
+    assert_eq!(config.state_dir, home.path().join(".loka"));
+    assert_eq!(config.working_dir, home.path().join(".loka/workspace"));
 }
 
 #[test]

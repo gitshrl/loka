@@ -326,7 +326,7 @@ where
     let dir = get_value(get, "LOKA_WORKING_DIR")
         .or_else(|| normalize_optional(file_value))
         .map(PathBuf::from)
-        .map_or_else(std::env::current_dir, Ok)
+        .map_or_else(|| default_working_dir(get), Ok)
         .context("read current working directory")?;
 
     if !dir.is_absolute() {
@@ -334,6 +334,20 @@ where
     }
 
     Ok(dir)
+}
+
+fn default_working_dir<F>(get: &F) -> Result<PathBuf>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(home) = get("HOME")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(PathBuf::from(home).join(".loka").join("workspace"));
+    }
+
+    Ok(std::env::current_dir()?.join(".loka").join("workspace"))
 }
 
 fn config_file_path<F>(get: &F) -> PathBuf

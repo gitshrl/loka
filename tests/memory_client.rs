@@ -1,5 +1,5 @@
 use httpmock::prelude::*;
-use loka_agent::memory::{
+use loka::memory::{
     MemoryClient, MemoryNoteInput, MemoryPrefetchInput, MemorySessionEndInput, MemoryShutdownInput,
     MemoryTurnInput,
 };
@@ -82,7 +82,7 @@ async fn sync_turn_posts_completed_turn_to_memory_api() {
                 "sessionId": "session-1",
                 "user": "what next",
                 "assistant": "ship it",
-                "agentId": "loka-agent"
+                "agentId": "loka"
             }));
 
         then.status(202);
@@ -94,7 +94,7 @@ async fn sync_turn_posts_completed_turn_to_memory_api() {
             session_id: Some("session-1".to_string()),
             user: "what next".to_string(),
             assistant: "ship it".to_string(),
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
         })
         .await
         .expect("turn sync should succeed");
@@ -110,7 +110,7 @@ async fn session_end_returns_optional_proposal_id() {
             .path("/api/memory/session-end")
             .json_body(json!({
                 "sessionId": "session-1",
-                "agentId": "loka-agent"
+                "agentId": "loka"
             }));
 
         then.status(200)
@@ -124,7 +124,7 @@ async fn session_end_returns_optional_proposal_id() {
     let proposal_id = client
         .end_session(MemorySessionEndInput {
             session_id: "session-1".to_string(),
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
         })
         .await
         .expect("session end should succeed");
@@ -140,7 +140,7 @@ async fn shutdown_posts_agent_id_to_memory_api() {
         when.method(POST)
             .path("/api/memory/shutdown")
             .json_body(json!({
-                "agentId": "loka-agent"
+                "agentId": "loka"
             }));
 
         then.status(204);
@@ -149,7 +149,7 @@ async fn shutdown_posts_agent_id_to_memory_api() {
     let client = MemoryClient::new(server.base_url());
     client
         .shutdown(MemoryShutdownInput {
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
         })
         .await
         .expect("shutdown should succeed");
@@ -165,7 +165,7 @@ async fn propose_note_defaults_to_proposal_mode() {
             "title": "Decision",
             "body": "Use Rust for the agent control plane.",
             "kind": "note",
-            "agentId": "loka-agent",
+            "agentId": "loka",
             "tags": ["architecture"],
             "mode": "propose"
         }));
@@ -184,7 +184,7 @@ async fn propose_note_defaults_to_proposal_mode() {
             title: "Decision".to_string(),
             body: "Use Rust for the agent control plane.".to_string(),
             kind: "note".to_string(),
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
             tags: vec!["architecture".to_string()],
         })
         .await
@@ -213,7 +213,7 @@ async fn propose_note_rejects_direct_write_response() {
             title: "Decision".to_string(),
             body: "Keep writes proposal-first.".to_string(),
             kind: "note".to_string(),
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
             tags: vec![],
         })
         .await

@@ -1,8 +1,8 @@
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::learning::{LearnSessionOutput, LearnSessionRequest, LearningEngine};
-use loka_agent::messages::Role;
-use loka_agent::session::SessionStore;
+use loka::config::AppConfig;
+use loka::learning::{LearnSessionOutput, LearnSessionRequest, LearningEngine};
+use loka::messages::Role;
+use loka::session::SessionStore;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -56,7 +56,7 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
             "title": format!("Session learning: {session_id}"),
             "body": "- Decision: Loka uses Rust as the control plane.",
             "kind": "note",
-            "agentId": "loka-agent",
+            "agentId": "loka",
             "tags": ["learning", "session"],
             "mode": "propose"
         }));
@@ -75,9 +75,9 @@ async fn learn_session_extracts_durable_note_and_writes_proposal() {
             model_api_key: "sk-test".to_string(),
             memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
-            agent_id: "loka-agent".to_string(),
-            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-            memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+            agent_id: "loka".to_string(),
+            model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+            memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },
@@ -133,9 +133,9 @@ async fn learn_session_skips_memory_write_when_model_returns_none() {
             model_api_key: "sk-test".to_string(),
             memory_base_url: memory.base_url(),
             model: "gpt-5.5".to_string(),
-            agent_id: "loka-agent".to_string(),
-            model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-            memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+            agent_id: "loka".to_string(),
+            model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+            memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
             working_dir: PathBuf::from("/tmp"),
             state_dir: PathBuf::from(".test-state"),
         },

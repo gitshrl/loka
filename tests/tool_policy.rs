@@ -1,5 +1,5 @@
-use loka_agent::permissions::{ApprovalDecision, ApprovalPolicy, PermissionMode};
-use loka_agent::tools::{ToolAccess, ToolRegistry};
+use loka::permissions::{ApprovalDecision, ApprovalPolicy, PermissionMode};
+use loka::tools::{ToolAccess, ToolRegistry};
 
 #[test]
 fn registry_contains_core_harness_tools() {

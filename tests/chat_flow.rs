@@ -1,7 +1,7 @@
 use httpmock::prelude::*;
-use loka_agent::agent::{Agent, ChatSessionRequest};
-use loka_agent::config::AppConfig;
-use loka_agent::session::SessionStore;
+use loka::agent::{Agent, ChatSessionRequest};
+use loka::config::AppConfig;
+use loka::session::SessionStore;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -105,7 +105,7 @@ async fn chat_summarizes_long_session_as_proposal() {
         when.method(POST)
             .path("/api/notes")
             .body_includes("- durable chat summary")
-            .body_includes("loka-agent")
+            .body_includes("loka")
             .body_includes("summary")
             .body_includes("session")
             .body_includes("propose");
@@ -166,20 +166,20 @@ async fn strict_chat_syncs_turn_and_ends_session() {
             .path("/api/memory/turns")
             .body_includes("\"user\":\"capture this\"")
             .body_includes("\"assistant\":\"Captured.\"")
-            .body_includes("\"agentId\":\"loka-agent\"");
+            .body_includes("\"agentId\":\"loka\"");
 
         then.status(202);
     });
     let session_end = memory.mock(|when, then| {
         when.method(POST)
             .path("/api/memory/session-end")
-            .body_includes("\"agentId\":\"loka-agent\"");
+            .body_includes("\"agentId\":\"loka\"");
 
         then.status(204);
     });
 
     let mut config = app_config(&model_client, &memory);
-    config.memory_lifecycle = loka_agent::config::MemoryLifecycleMode::Strict;
+    config.memory_lifecycle = loka::config::MemoryLifecycleMode::Strict;
     let agent = Agent::with_session_store(config, sessions);
 
     let output = agent
@@ -219,9 +219,9 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

@@ -1,6 +1,6 @@
-use loka_agent::messages::Role;
-use loka_agent::session::{SessionStore, ToolCallStatus};
-use loka_agent::tui::{TuiApp, TuiPane, render_tui_frame};
+use loka::messages::Role;
+use loka::session::{SessionStore, ToolCallStatus};
+use loka::tui::{TuiApp, TuiPane, render_tui_frame};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::json;

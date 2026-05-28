@@ -1,8 +1,8 @@
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::messages::Role;
-use loka_agent::session::SessionStore;
-use loka_agent::session_summary::{
+use loka::config::AppConfig;
+use loka::messages::Role;
+use loka::session::SessionStore;
+use loka::session_summary::{
     SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest,
 };
 use serde_json::json;
@@ -57,7 +57,7 @@ async fn summarize_session_writes_proposal_first_memory_note() {
             "title": format!("Session summary: {session_id}"),
             "body": "- Runtime plan: Docker first, then SSH and cloud VM.",
             "kind": "note",
-            "agentId": "loka-agent",
+            "agentId": "loka",
             "tags": ["summary", "session"],
             "mode": "propose"
         }));
@@ -128,9 +128,9 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

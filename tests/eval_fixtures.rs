@@ -1,4 +1,4 @@
-use loka_agent::evals::{
+use loka::evals::{
     AskScenario, EvalExpectations, EvalFixture, EvalScenario, load_fixtures, validate_fixture,
     validate_fixtures,
 };

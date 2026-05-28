@@ -1,33 +1,33 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use loka_agent::agent::{Agent, AskRequest, ChatSessionRequest, DEFAULT_SUMMARY_MIN_TURNS};
-use loka_agent::config::AppConfig;
-use loka_agent::evals::{DEFAULT_FIXTURE_DIR, EvalFixture, load_fixtures, validate_fixtures};
-use loka_agent::gateway::run_telegram_gateway;
-use loka_agent::learning::{
+use loka::agent::{Agent, AskRequest, ChatSessionRequest, DEFAULT_SUMMARY_MIN_TURNS};
+use loka::config::AppConfig;
+use loka::evals::{DEFAULT_FIXTURE_DIR, EvalFixture, load_fixtures, validate_fixtures};
+use loka::gateway::run_telegram_gateway;
+use loka::learning::{
     LearnSessionOutput, LearnSessionRequest, LearningEngine, pending_learning_proposals,
 };
-use loka_agent::memory::MemoryClient;
-use loka_agent::messages::Message;
-use loka_agent::model::{ChatRequest, ModelClient};
-use loka_agent::multi_agent::{
+use loka::memory::MemoryClient;
+use loka::messages::Message;
+use loka::model::{ChatRequest, ModelClient};
+use loka::multi_agent::{
     AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, WorkerSpec,
 };
-use loka_agent::permissions::{ApprovalPolicy, PermissionMode};
-use loka_agent::runtime::{
+use loka::permissions::{ApprovalPolicy, PermissionMode};
+use loka::runtime::{
     CloudVmExecutor, DockerExecutor, HostExecutor, RuntimeCommand as ExecutorCommand,
     RuntimeExecutor, RuntimeOutput, ServerlessExecutor, SshExecutor,
 };
-use loka_agent::session::SessionStore;
-use loka_agent::session_summary::{
+use loka::session::SessionStore;
+use loka::session_summary::{
     SessionSummaryEngine, SessionSummaryOutput, SessionSummaryRequest,
 };
-use loka_agent::skill_creation::{
+use loka::skill_creation::{
     ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
 };
-use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
-use loka_agent::tools::ToolRegistry;
-use loka_agent::tui::{TuiApp, run_tui};
+use loka::skills::{SkillDraft, SkillStatus, SkillStore};
+use loka::tools::ToolRegistry;
+use loka::tui::{TuiApp, run_tui};
 use std::fmt;
 use std::io::{self, Write};
 use std::net::SocketAddr;

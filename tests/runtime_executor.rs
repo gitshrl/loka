@@ -1,6 +1,6 @@
 use futures::future::BoxFuture;
 use httpmock::prelude::*;
-use loka_agent::runtime::{
+use loka::runtime::{
     CloudVmExecutor, DockerExecutor, HostExecutor, ProcessInvocation, ProcessRunner,
     RuntimeCommand, RuntimeExecutor, RuntimeLimits, RuntimeOutput, ServerlessExecutor, SshExecutor,
 };

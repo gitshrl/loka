@@ -1,7 +1,7 @@
-use loka_agent::messages::{Message, Role};
-use loka_agent::prompt::{PromptBuilder, PromptInput};
-use loka_agent::session::SessionStore;
-use loka_agent::tokens::{TokenScope, estimate_messages_tokens, estimate_text_tokens};
+use loka::messages::{Message, Role};
+use loka::prompt::{PromptBuilder, PromptInput};
+use loka::session::SessionStore;
+use loka::tokens::{TokenScope, estimate_messages_tokens, estimate_text_tokens};
 
 #[test]
 fn token_estimates_are_deterministic_and_nonzero_for_content() {
@@ -23,9 +23,9 @@ fn token_estimates_are_deterministic_and_nonzero_for_content() {
 #[test]
 fn prompt_builder_accounts_for_prompt_layers() {
     let input = PromptInput {
-        agent_id: "loka-agent".to_string(),
+        agent_id: "loka".to_string(),
         model: "gpt-5.5".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
         session_id: Some("session-1".to_string()),
         system_message: Some("caller guidance".to_string()),
         memory_markdown: Some("remember this".to_string()),

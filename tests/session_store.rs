@@ -1,5 +1,5 @@
-use loka_agent::messages::Role;
-use loka_agent::session::SessionStore;
+use loka::messages::Role;
+use loka::session::SessionStore;
 
 #[test]
 fn session_store_persists_and_searches_turns() {

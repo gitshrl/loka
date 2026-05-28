@@ -1,4 +1,4 @@
-use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
+use loka::skills::{SkillDraft, SkillStatus, SkillStore};
 
 #[test]
 fn skill_store_proposes_lists_enables_and_matches_skills() {

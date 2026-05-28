@@ -1,7 +1,7 @@
 use futures::future::BoxFuture;
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::gateway::{
+use loka::config::AppConfig;
+use loka::gateway::{
     GatewayAgent, GatewayRequest, GatewayResponse, GatewaySessionStore, LokaGatewayAgent,
     TelegramClient, TelegramGateway, TelegramGatewayOutcome, TelegramUpdate,
 };
@@ -131,7 +131,7 @@ async fn strict_loka_gateway_prefetches_and_syncs_turn() {
             .path("/api/memory/turns")
             .body_includes("\"user\":\"hello gateway\"")
             .body_includes("\"assistant\":\"gateway answer\"")
-            .body_includes("\"agentId\":\"loka-agent\"");
+            .body_includes("\"agentId\":\"loka\"");
 
         then.status(202);
     });
@@ -155,9 +155,9 @@ async fn strict_loka_gateway_prefetches_and_syncs_turn() {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Strict,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Strict,
         working_dir: PathBuf::from("/tmp"),
         state_dir: state.path().to_path_buf(),
     });

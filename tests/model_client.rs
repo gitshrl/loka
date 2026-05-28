@@ -1,7 +1,7 @@
 use httpmock::prelude::*;
-use loka_agent::config::ModelProtocol;
-use loka_agent::messages::Message;
-use loka_agent::model::{ChatRequest, ModelClient};
+use loka::config::ModelProtocol;
+use loka::messages::Message;
+use loka::model::{ChatRequest, ModelClient};
 use serde_json::json;
 
 #[tokio::test]

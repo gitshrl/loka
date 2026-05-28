@@ -1,8 +1,8 @@
 use httpmock::prelude::*;
-use loka_agent::mcp::{
+use loka::mcp::{
     McpClient, McpServerConfig, is_mcp_tool_name, qualify_mcp_tool_name, wrap_untrusted_mcp_content,
 };
-use loka_agent::tools::{ToolAccess, ToolRegistry};
+use loka::tools::{ToolAccess, ToolRegistry};
 use serde_json::json;
 
 #[tokio::test]
@@ -106,7 +106,7 @@ fn mcp_tools_extend_registry_with_pessimistic_default_access() {
     let tool_name = qualify_mcp_tool_name("records", "lookup").expect("qualified name");
     assert!(is_mcp_tool_name(&tool_name));
 
-    let tool = loka_agent::mcp::McpTool {
+    let tool = loka::mcp::McpTool {
         server: "records".to_string(),
         name: tool_name.clone(),
         raw_name: "lookup".to_string(),

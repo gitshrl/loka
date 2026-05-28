@@ -1,11 +1,11 @@
 use httpmock::Mock;
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::multi_agent::{
+use loka::config::AppConfig;
+use loka::multi_agent::{
     AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, TaskStatus, WorkerSpec,
 };
-use loka_agent::session::SessionStore;
-use loka_agent::tokens::TokenScope;
+use loka::session::SessionStore;
+use loka::tokens::TokenScope;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -176,9 +176,9 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

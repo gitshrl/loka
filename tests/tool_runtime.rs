@@ -1,11 +1,11 @@
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::mcp::McpServerConfig;
-use loka_agent::memory::MemoryClient;
-use loka_agent::messages::Role;
-use loka_agent::session::{SessionStore, ToolCallStatus};
-use loka_agent::tokens::TokenScope;
-use loka_agent::tool_runtime::{ToolCall, ToolRuntime};
+use loka::config::AppConfig;
+use loka::mcp::McpServerConfig;
+use loka::memory::MemoryClient;
+use loka::messages::Role;
+use loka::session::{SessionStore, ToolCallStatus};
+use loka::tokens::TokenScope;
+use loka::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -140,7 +140,7 @@ async fn tool_runtime_executes_memory_search() {
     });
 
     let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"))
-        .with_memory(MemoryClient::new(memory.base_url()), "loka-agent");
+        .with_memory(MemoryClient::new(memory.base_url()), "loka");
     let result = runtime
         .execute(ToolCall {
             name: "memory_search".to_string(),
@@ -164,7 +164,7 @@ async fn tool_runtime_executes_memory_propose_in_proposal_mode() {
             "title": "Tool note",
             "body": "Tool runtime writes proposal-first.",
             "kind": "note",
-            "agentId": "loka-agent",
+            "agentId": "loka",
             "tags": ["tool"],
             "mode": "propose"
         }));
@@ -178,7 +178,7 @@ async fn tool_runtime_executes_memory_propose_in_proposal_mode() {
     });
 
     let runtime = ToolRuntime::new(SessionStore::in_memory().expect("sessions"))
-        .with_memory(MemoryClient::new(memory.base_url()), "loka-agent");
+        .with_memory(MemoryClient::new(memory.base_url()), "loka");
     let result = runtime
         .execute(ToolCall {
             name: "memory_propose".to_string(),
@@ -230,7 +230,7 @@ async fn tool_runtime_executes_learn_session() {
             "title": format!("Session learning: {session_id}"),
             "body": "- Decision: durable memory stays in memory API.",
             "kind": "note",
-            "agentId": "loka-agent",
+            "agentId": "loka",
             "tags": ["learning", "session"],
             "mode": "propose"
         }));
@@ -486,9 +486,9 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

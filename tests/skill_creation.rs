@@ -1,11 +1,11 @@
 use httpmock::prelude::*;
-use loka_agent::config::AppConfig;
-use loka_agent::messages::Role;
-use loka_agent::session::SessionStore;
-use loka_agent::skill_creation::{
+use loka::config::AppConfig;
+use loka::messages::Role;
+use loka::session::SessionStore;
+use loka::skill_creation::{
     ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
 };
-use loka_agent::skills::{SkillStatus, SkillStore};
+use loka::skills::{SkillStatus, SkillStore};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -66,7 +66,7 @@ async fn propose_from_session_creates_memory_and_local_skill_proposals() {
             .path("/api/notes")
             .body_includes("Skill proposal: Rust review")
             .body_includes("\"kind\":\"note\"")
-            .body_includes("\"agentId\":\"loka-agent\"")
+            .body_includes("\"agentId\":\"loka\"")
             .body_includes("\"tags\":[\"skill\",\"proposal\",\"session\"]")
             .body_includes("\"mode\":\"propose\"")
             .body_includes("Trigger: rust review")
@@ -146,9 +146,9 @@ fn app_config(model_client: &MockServer, memory: &MockServer) -> AppConfig {
         model_api_key: "sk-test".to_string(),
         memory_base_url: memory.base_url(),
         model: "gpt-5.5".to_string(),
-        agent_id: "loka-agent".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
-        memory_lifecycle: loka_agent::config::MemoryLifecycleMode::Off,
+        agent_id: "loka".to_string(),
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
+        memory_lifecycle: loka::config::MemoryLifecycleMode::Off,
         working_dir: PathBuf::from("/tmp"),
         state_dir: PathBuf::from(".test-state"),
     }

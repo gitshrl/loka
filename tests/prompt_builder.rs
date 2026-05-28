@@ -1,4 +1,4 @@
-use loka_agent::prompt::{
+use loka::prompt::{
     ContextFile, PromptBuilder, PromptInput, assemble_prompt, discover_context_files,
     sanitize_context_file,
 };
@@ -7,9 +7,9 @@ use std::path::PathBuf;
 #[test]
 fn prompt_orders_stable_context_then_volatile() {
     let input = PromptInput {
-        agent_id: "loka-agent".to_string(),
+        agent_id: "loka".to_string(),
         model: "gpt-5.5".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
         session_id: Some("session-1".to_string()),
         system_message: Some("Caller system message.".to_string()),
         memory_markdown: Some("# Memory Context\n- user prefers direct answers".to_string()),
@@ -38,9 +38,9 @@ fn prompt_orders_stable_context_then_volatile() {
 #[test]
 fn prompt_is_deterministic_for_identical_input() {
     let input = PromptInput {
-        agent_id: "loka-agent".to_string(),
+        agent_id: "loka".to_string(),
         model: "gpt-5.5".to_string(),
-        model_protocol: loka_agent::config::ModelProtocol::OpenAiCompatible,
+        model_protocol: loka::config::ModelProtocol::OpenAiCompatible,
         session_id: None,
         system_message: None,
         memory_markdown: None,

@@ -229,7 +229,7 @@ impl AppConfig {
                 &get,
                 "LOKA_AGENT_ID",
                 file.agent_id.as_deref(),
-                "loka-agent",
+                "loka",
             ),
             model_protocol: get_model_protocol(&get, file.model_protocol.as_deref())?,
             memory_lifecycle: get_memory_lifecycle(&get, file.memory_lifecycle.as_deref())?,

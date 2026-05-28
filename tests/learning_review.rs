@@ -1,6 +1,6 @@
 use httpmock::prelude::*;
-use loka_agent::learning::pending_learning_proposals;
-use loka_agent::memory::MemoryClient;
+use loka::learning::pending_learning_proposals;
+use loka::memory::MemoryClient;
 use serde_json::json;
 
 #[tokio::test]

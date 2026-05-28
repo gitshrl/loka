@@ -130,7 +130,7 @@ impl ToolRuntime {
             memory: None,
             mcp: McpRuntime::default(),
             learning: None,
-            agent_id: "loka-agent".to_string(),
+            agent_id: "loka".to_string(),
             host: None,
         }
     }

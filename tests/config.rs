@@ -1,4 +1,4 @@
-use loka_agent::config::AppConfig;
+use loka::config::AppConfig;
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,14 +13,14 @@ fn config_uses_development_service_defaults() {
     assert_eq!(config.model_base_url, "http://127.0.0.1:8317");
     assert_eq!(config.memory_base_url, "http://127.0.0.1:4321");
     assert_eq!(config.model, "gpt-5.5");
-    assert_eq!(config.agent_id, "loka-agent");
+    assert_eq!(config.agent_id, "loka");
     assert_eq!(
         config.model_protocol,
-        loka_agent::config::ModelProtocol::OpenAiCompatible
+        loka::config::ModelProtocol::OpenAiCompatible
     );
     assert_eq!(
         config.memory_lifecycle,
-        loka_agent::config::MemoryLifecycleMode::Off
+        loka::config::MemoryLifecycleMode::Off
     );
     assert_eq!(config.model_api_key, "sk-test");
     assert_eq!(config.state_dir, PathBuf::from(".loka"));
@@ -87,11 +87,11 @@ working_dir = "/srv/loka-work"
     assert_eq!(config.agent_id, "agent-file");
     assert_eq!(
         config.model_protocol,
-        loka_agent::config::ModelProtocol::AnthropicCompatible
+        loka::config::ModelProtocol::AnthropicCompatible
     );
     assert_eq!(
         config.memory_lifecycle,
-        loka_agent::config::MemoryLifecycleMode::Strict
+        loka::config::MemoryLifecycleMode::Strict
     );
     assert_eq!(config.state_dir, PathBuf::from("/srv/loka-state"));
     assert_eq!(config.working_dir, PathBuf::from("/srv/loka-work"));
@@ -129,11 +129,11 @@ working_dir = "/srv/loka-work"
     assert_eq!(config.model, "gpt-env");
     assert_eq!(
         config.model_protocol,
-        loka_agent::config::ModelProtocol::AnthropicCompatible
+        loka::config::ModelProtocol::AnthropicCompatible
     );
     assert_eq!(
         config.memory_lifecycle,
-        loka_agent::config::MemoryLifecycleMode::Strict
+        loka::config::MemoryLifecycleMode::Strict
     );
     assert_eq!(config.working_dir, PathBuf::from("/tmp/loka-work"));
 }

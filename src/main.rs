@@ -12,6 +12,9 @@ use loka_agent::multi_agent::{
 };
 use loka_agent::permissions::{ApprovalPolicy, PermissionMode};
 use loka_agent::session::SessionStore;
+use loka_agent::skill_creation::{
+    ProposeSkillFromSessionOutput, ProposeSkillFromSessionRequest, SkillCreationEngine,
+};
 use loka_agent::skills::{SkillDraft, SkillStatus, SkillStore};
 use loka_agent::tools::ToolRegistry;
 use loka_agent::wiki::WikiClient;
@@ -169,6 +172,11 @@ enum SkillsCommand {
         safety_notes: Vec<String>,
         #[arg(long = "example", help = "Usage example")]
         examples: Vec<String>,
+    },
+    #[command(about = "propose a reusable skill from one persisted session")]
+    ProposeFromSession {
+        #[arg(help = "Session id to inspect for a reusable workflow")]
+        session_id: String,
     },
     #[command(about = "enable a proposed or disabled skill")]
     Enable {
@@ -482,6 +490,9 @@ async fn handle_skills(command: SkillsCommand) -> Result<()> {
             safety_notes,
             examples,
         } => handle_skills_propose(name, trigger, instruction, tools, safety_notes, examples),
+        SkillsCommand::ProposeFromSession { session_id } => {
+            handle_skills_propose_from_session(session_id).await
+        }
         SkillsCommand::Enable { id } => handle_skills_enable(&id),
         SkillsCommand::Run { id, input } => handle_skills_run(&id, input).await,
     }
@@ -518,6 +529,33 @@ fn handle_skills_propose(
         examples,
     })?;
     println!("proposed skill {}", skill.id);
+    Ok(())
+}
+
+async fn handle_skills_propose_from_session(session_id: String) -> Result<()> {
+    let config = AppConfig::from_env()?;
+    let sessions = SessionStore::open(&config.state_dir)?;
+    let skills = SkillStore::open(&config.state_dir)?;
+    let engine = SkillCreationEngine::new(config, sessions, skills);
+
+    match engine
+        .propose_from_session(ProposeSkillFromSessionRequest { session_id })
+        .await?
+    {
+        ProposeSkillFromSessionOutput::ProposalCreated {
+            skill,
+            wiki_proposal_id,
+        } => {
+            println!(
+                "proposed skill {}\twiki proposal {}",
+                skill.id, wiki_proposal_id
+            );
+        }
+        ProposeSkillFromSessionOutput::NoReusableWorkflow => {
+            println!("no reusable workflow");
+        }
+    }
+
     Ok(())
 }
 

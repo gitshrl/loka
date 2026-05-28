@@ -332,7 +332,7 @@ fn row_to_skill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Skill> {
     })
 }
 
-fn validate_draft(draft: &SkillDraft) -> Result<()> {
+pub(crate) fn validate_draft(draft: &SkillDraft) -> Result<()> {
     ensure_non_empty("skill name", &draft.name)?;
     ensure_non_empty("skill trigger", &draft.trigger)?;
     ensure_non_empty("skill instructions", &draft.instructions)?;

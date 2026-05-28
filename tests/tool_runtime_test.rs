@@ -4,6 +4,7 @@ use loka_agent::mcp::McpServerConfig;
 use loka_agent::memory::MemoryClient;
 use loka_agent::messages::Role;
 use loka_agent::session::{SessionStore, ToolCallStatus};
+use loka_agent::tokens::TokenScope;
 use loka_agent::tool_runtime::{ToolCall, ToolRuntime};
 use serde_json::json;
 use std::fs;
@@ -67,6 +68,17 @@ async fn tool_runtime_persists_completed_tool_call_transcript() {
     assert_eq!(calls[0].output, Some(result.output));
     assert_eq!(calls[0].error, None);
     assert!(calls[0].completed_at.is_some());
+
+    let token_records = inspector
+        .session_token_usage_records(&session_id)
+        .expect("token records");
+    let tool_record = token_records
+        .iter()
+        .find(|record| record.scope == TokenScope::Tool)
+        .expect("tool token record");
+    assert_eq!(tool_record.source, "session_search");
+    assert!(tool_record.prompt_tokens > 0);
+    assert!(tool_record.completion_tokens > 0);
 }
 
 #[tokio::test]

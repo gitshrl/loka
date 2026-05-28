@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use crate::config::ModelProtocol;
+use crate::tokens::estimate_text_tokens;
 
 const CONTEXT_FILE_NAMES: &[&str] = &["AGENTS.md", "LOKA.md", ".loka.md", ".cursorrules"];
 const MAX_CONTEXT_FILE_BYTES: u64 = 64 * 1024;
@@ -45,6 +46,15 @@ pub struct PromptParts {
     pub context: String,
     pub volatile: String,
     pub fingerprint: String,
+    pub token_accounting: PromptTokenAccounting,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PromptTokenAccounting {
+    pub stable_tokens: u64,
+    pub context_tokens: u64,
+    pub volatile_tokens: u64,
+    pub total_tokens: u64,
 }
 
 impl PromptParts {
@@ -74,12 +84,14 @@ impl PromptBuilder {
             build_context_prompt(input.system_message.clone(), input.context_files.clone());
         let volatile = build_volatile_prompt(input);
         let fingerprint = fingerprint_prompt_parts(&stable, &context, &volatile);
+        let token_accounting = prompt_token_accounting(&stable, &context, &volatile);
 
         PromptParts {
             stable,
             context,
             volatile,
             fingerprint,
+            token_accounting,
         }
     }
 }
@@ -233,4 +245,17 @@ fn fingerprint_prompt_parts(stable: &str, context: &str, volatile: &str) -> Stri
     hasher.update(b"\0");
     hasher.update(volatile.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn prompt_token_accounting(stable: &str, context: &str, volatile: &str) -> PromptTokenAccounting {
+    let stable_tokens = estimate_text_tokens(stable);
+    let context_tokens = estimate_text_tokens(context);
+    let volatile_tokens = estimate_text_tokens(volatile);
+
+    PromptTokenAccounting {
+        stable_tokens,
+        context_tokens,
+        volatile_tokens,
+        total_tokens: stable_tokens + context_tokens + volatile_tokens,
+    }
 }

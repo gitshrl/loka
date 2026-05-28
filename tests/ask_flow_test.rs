@@ -3,6 +3,7 @@ use loka_agent::agent::{Agent, AskRequest};
 use loka_agent::config::AppConfig;
 use loka_agent::session::SessionStore;
 use loka_agent::skills::{SkillDraft, SkillStore};
+use loka_agent::tokens::TokenScope;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -259,6 +260,9 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
     let session_id = output.session_id.expect("session id");
     let sessions = SessionStore::open(tempdir.path()).expect("session store");
     let hits = sessions.search("persisted", 10).expect("search");
+    let token_records = sessions
+        .session_token_usage_records(&session_id)
+        .expect("token records");
 
     assert!(
         sessions
@@ -268,6 +272,16 @@ async fn ask_with_session_store_persists_user_and_assistant_turns() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].session_id, session_id);
     assert_eq!(hits[0].content, "Persisted.");
+    assert!(
+        token_records
+            .iter()
+            .any(|record| record.scope == TokenScope::Prompt && record.source == "ask")
+    );
+    assert!(
+        token_records
+            .iter()
+            .any(|record| record.scope == TokenScope::Session && record.source == "turn:user")
+    );
 }
 
 #[tokio::test]

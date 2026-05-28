@@ -24,6 +24,7 @@ use crate::model::{ChatRequest, ModelClient};
 use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
 use crate::skills::SkillStore;
+use crate::tokens::{TokenScope, TokenUsage, estimate_messages_tokens};
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
@@ -394,9 +395,16 @@ impl GatewayAgent for LokaGatewayAgent {
                 });
             }
             transcript.push(Message::user(request.text.clone()));
+            let messages = transcript.into_messages();
             {
                 let sessions = SessionStore::open(&self.config.state_dir)?;
                 sessions.append_turn(&session_id, Role::User, &request.text)?;
+                sessions.record_token_usage(
+                    &session_id,
+                    TokenScope::Prompt,
+                    "gateway",
+                    TokenUsage::estimated_prompt(estimate_messages_tokens(&messages)),
+                )?;
             }
 
             let output = ModelClient::with_protocol(
@@ -406,7 +414,7 @@ impl GatewayAgent for LokaGatewayAgent {
             )
             .chat(ChatRequest {
                 model: self.config.model.clone(),
-                messages: transcript.into_messages(),
+                messages,
             })
             .await?;
 

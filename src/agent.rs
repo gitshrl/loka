@@ -11,6 +11,7 @@ use crate::prompt::{PromptBuilder, PromptInput, discover_context_files};
 use crate::session::SessionStore;
 use crate::session_summary::{SessionSummaryOutput, SessionSummaryRequest, summarize_session};
 use crate::skills::SkillStore;
+use crate::tokens::{TokenScope, TokenUsage, estimate_messages_tokens};
 use time::OffsetDateTime;
 
 const RECALL_LIMIT: u8 = 6;
@@ -138,12 +139,19 @@ impl Agent {
         transcript.push(Message::system(system_prompt));
         transcript.push(Message::user(request.prompt.clone()));
         self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
+        let messages = transcript.into_messages();
+        self.record_token_usage(
+            session_id.as_deref(),
+            TokenScope::Prompt,
+            "ask",
+            TokenUsage::estimated_prompt(estimate_messages_tokens(&messages)),
+        )?;
 
         let response = self
             .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
-                messages: transcript.into_messages(),
+                messages,
             })
             .await?;
 
@@ -180,13 +188,20 @@ impl Agent {
         transcript.push(Message::system(system_prompt));
         transcript.push(Message::user(request.prompt.clone()));
         self.append_turn(session_id.as_deref(), Role::User, &request.prompt)?;
+        let messages = transcript.into_messages();
+        self.record_token_usage(
+            session_id.as_deref(),
+            TokenScope::Prompt,
+            "ask_stream",
+            TokenUsage::estimated_prompt(estimate_messages_tokens(&messages)),
+        )?;
 
         let response = self
             .model_client
             .chat_stream(
                 ChatRequest {
                     model: self.config.model.clone(),
-                    messages: transcript.into_messages(),
+                    messages,
                 },
                 on_delta,
             )
@@ -246,12 +261,19 @@ impl Agent {
         }
         transcript.push(Message::user(prompt.clone()));
         self.append_turn(Some(session_id), Role::User, &prompt)?;
+        let messages = transcript.into_messages();
+        self.record_token_usage(
+            Some(session_id),
+            TokenScope::Prompt,
+            "ask_in_session",
+            TokenUsage::estimated_prompt(estimate_messages_tokens(&messages)),
+        )?;
 
         let response = self
             .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
-                messages: transcript.into_messages(),
+                messages,
             })
             .await?;
 
@@ -347,12 +369,19 @@ impl Agent {
         let user = Message::user(prompt.clone());
         call_transcript.push(user.clone());
         sessions.append_turn(&session.session_id, Role::User, &prompt)?;
+        let messages = call_transcript.into_messages();
+        self.record_token_usage(
+            Some(&session.session_id),
+            TokenScope::Prompt,
+            "chat_turn",
+            TokenUsage::estimated_prompt(estimate_messages_tokens(&messages)),
+        )?;
 
         let response = self
             .model_client
             .chat(ChatRequest {
                 model: self.config.model.clone(),
-                messages: call_transcript.into_messages(),
+                messages,
             })
             .await?;
 
@@ -452,6 +481,20 @@ impl Agent {
     fn append_turn(&self, session_id: Option<&str>, role: Role, content: &str) -> Result<()> {
         if let (Some(store), Some(session_id)) = (&self.sessions, session_id) {
             store.append_turn(session_id, role, content)?;
+        }
+
+        Ok(())
+    }
+
+    fn record_token_usage(
+        &self,
+        session_id: Option<&str>,
+        scope: TokenScope,
+        source: &str,
+        usage: TokenUsage,
+    ) -> Result<()> {
+        if let (Some(store), Some(session_id)) = (&self.sessions, session_id) {
+            store.record_token_usage(session_id, scope, source, usage)?;
         }
 
         Ok(())

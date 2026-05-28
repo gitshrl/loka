@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::ModelProtocol;
 use crate::messages::Message;
 use crate::messages::Role;
+pub use crate::tokens::TokenUsage;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -28,16 +29,6 @@ pub struct ChatRequest {
 pub struct ChatOutput {
     pub content: String,
     pub usage: Option<TokenUsage>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub struct TokenUsage {
-    #[serde(default)]
-    pub prompt_tokens: u64,
-    #[serde(default)]
-    pub completion_tokens: u64,
-    #[serde(default)]
-    pub total_tokens: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -239,7 +230,7 @@ impl ModelClient {
 
         Ok(ChatOutput {
             content,
-            usage: body.usage,
+            usage: body.usage.map(TokenUsage::normalized),
         })
     }
 
@@ -269,7 +260,7 @@ impl ModelClient {
         let content = anthropic_text(body.content)?;
         Ok(ChatOutput {
             content,
-            usage: body.usage.map(Into::into),
+            usage: body.usage.map(Into::into).map(TokenUsage::normalized),
         })
     }
 
@@ -496,7 +487,7 @@ impl AnthropicStreamAccumulator {
         }
         Ok(ChatOutput {
             content: self.content,
-            usage: self.usage,
+            usage: self.usage.map(TokenUsage::normalized),
         })
     }
 
@@ -563,7 +554,7 @@ impl StreamAccumulator {
         }
         Ok(ChatOutput {
             content: self.content,
-            usage: self.usage,
+            usage: self.usage.map(TokenUsage::normalized),
         })
     }
 
@@ -587,7 +578,7 @@ impl StreamAccumulator {
         let chunk: OpenAiChatStreamChunk =
             serde_json::from_str(data).context("parse model API stream event")?;
         if let Some(usage) = chunk.usage {
-            self.usage = Some(usage);
+            self.usage = Some(usage.normalized());
         }
         for choice in chunk.choices {
             if let Some(delta) = choice.delta.content

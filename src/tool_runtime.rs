@@ -18,6 +18,7 @@ use crate::mcp::{
 use crate::memory::{MemoryClient, MemoryNoteInput};
 use crate::model::ModelClient;
 use crate::session::SessionStore;
+use crate::tokens::{TokenScope, TokenUsage, estimate_json_tokens, estimate_text_tokens};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
@@ -210,14 +211,23 @@ impl ToolRuntime {
     /// Returns an error when the tool call cannot be recorded, the tool call itself fails,
     /// or the final tool result cannot be persisted.
     pub async fn execute_in_session(&self, session_id: &str, call: ToolCall) -> Result<ToolResult> {
+        let tool_name = call.name.clone();
+        let input_tokens = estimate_json_tokens(&call.input);
         let call_id =
             self.sessions
-                .record_tool_call_started(session_id, &call.name, &call.input)?;
+                .record_tool_call_started(session_id, &tool_name, &call.input)?;
 
         match self.execute(call).await {
             Ok(result) => {
+                let output_tokens = estimate_json_tokens(&result.output);
                 self.sessions
                     .record_tool_call_completed(&call_id, &result.output)?;
+                self.sessions.record_token_usage(
+                    session_id,
+                    TokenScope::Tool,
+                    &tool_name,
+                    TokenUsage::new(input_tokens, output_tokens),
+                )?;
                 Ok(result)
             }
             Err(error) => {
@@ -225,6 +235,12 @@ impl ToolRuntime {
                 self.sessions
                     .record_tool_call_failed(&call_id, &error_text)
                     .with_context(|| format!("record failed tool call {call_id}"))?;
+                self.sessions.record_token_usage(
+                    session_id,
+                    TokenScope::Tool,
+                    &tool_name,
+                    TokenUsage::new(input_tokens, estimate_text_tokens(&error_text)),
+                )?;
                 Err(error)
             }
         }

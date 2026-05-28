@@ -5,6 +5,7 @@ use loka_agent::multi_agent::{
     AgentProfile, MultiAgentRunRequest, MultiAgentRuntime, TaskGraphStore, TaskStatus, WorkerSpec,
 };
 use loka_agent::session::SessionStore;
+use loka_agent::tokens::TokenScope;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -43,6 +44,14 @@ async fn multi_agent_run_persists_isolated_worker_sessions_and_synthesizes() {
         .expect("private search");
     assert_eq!(private_hits.len(), 1);
     assert_eq!(private_hits[0].session_id, output.workers[0].session_id);
+    let worker_tokens = sessions
+        .session_token_usage_records(&output.workers[0].session_id)
+        .expect("worker token records");
+    assert!(worker_tokens.iter().any(|record| {
+        record.scope == TokenScope::Worker
+            && record.source == "worker:planner"
+            && record.total_tokens == 16
+    }));
 
     assert_persisted_run(state.path(), &output.run_id, &output.supervisor_session_id);
 }

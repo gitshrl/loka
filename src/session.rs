@@ -11,6 +11,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::messages::Role;
+use crate::tokens::{TokenScope, TokenUsage, TokenUsageSummary, estimate_text_tokens};
 
 #[derive(Debug)]
 pub struct SessionStore {
@@ -74,6 +75,18 @@ pub struct ToolCallRecord {
     pub error: Option<String>,
     pub created_at: String,
     pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TokenUsageRecord {
+    pub id: String,
+    pub session_id: String,
+    pub scope: TokenScope,
+    pub source: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -163,6 +176,12 @@ impl SessionStore {
         self.conn.execute(
             "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
             params![created_at, session_id],
+        )?;
+        self.record_token_usage(
+            session_id,
+            TokenScope::Session,
+            &format!("turn:{role}"),
+            TokenUsage::total(estimate_text_tokens(content)),
         )?;
 
         Ok(())
@@ -333,6 +352,101 @@ impl SessionStore {
             .context("list session tool calls")
     }
 
+    /// Records token usage for one scoped unit of work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when timestamp formatting, integer conversion, or the insert fails.
+    pub fn record_token_usage(
+        &self,
+        session_id: &str,
+        scope: TokenScope,
+        source: &str,
+        usage: TokenUsage,
+    ) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let created_at = now_rfc3339()?;
+        let usage = usage.normalized();
+        let source = source.trim();
+        if source.is_empty() {
+            return Err(anyhow!("token usage source is required"));
+        }
+
+        self.conn
+            .execute(
+                "INSERT INTO token_usage
+                    (id, session_id, scope, source, prompt_tokens, completion_tokens,
+                     total_tokens, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    id,
+                    session_id,
+                    scope.as_str(),
+                    source,
+                    i64::try_from(usage.prompt_tokens).context("prompt token count exceeds i64")?,
+                    i64::try_from(usage.completion_tokens)
+                        .context("completion token count exceeds i64")?,
+                    i64::try_from(usage.total_tokens).context("total token count exceeds i64")?,
+                    created_at,
+                ],
+            )
+            .context("record token usage")?;
+
+        Ok(id)
+    }
+
+    /// Lists token usage records for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` rejects the query or persisted scope data is invalid.
+    pub fn session_token_usage_records(&self, session_id: &str) -> Result<Vec<TokenUsageRecord>> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, session_id, scope, source, prompt_tokens, completion_tokens, total_tokens,
+                    created_at
+             FROM token_usage
+             WHERE session_id = ?1
+             ORDER BY rowid ASC",
+        )?;
+
+        let rows = statement.query_map(params![session_id], |row| {
+            let scope: String = row.get(2)?;
+            let prompt_tokens: i64 = row.get(4)?;
+            let completion_tokens: i64 = row.get(5)?;
+            let total_tokens: i64 = row.get(6)?;
+            Ok(TokenUsageRecord {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                scope: decode_token_scope(2, &scope)?,
+                source: row.get(3)?,
+                prompt_tokens: prompt_tokens.max(0).cast_unsigned(),
+                completion_tokens: completion_tokens.max(0).cast_unsigned(),
+                total_tokens: total_tokens.max(0).cast_unsigned(),
+                created_at: row.get(7)?,
+            })
+        })?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("list token usage records")
+    }
+
+    /// Sums all token usage records for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when token usage records cannot be loaded.
+    pub fn session_token_usage(&self, session_id: &str) -> Result<TokenUsageSummary> {
+        let mut summary = TokenUsageSummary::default();
+        for record in self.session_token_usage_records(session_id)? {
+            summary.add(TokenUsage {
+                prompt_tokens: record.prompt_tokens,
+                completion_tokens: record.completion_tokens,
+                total_tokens: record.total_tokens,
+            });
+        }
+        Ok(summary)
+    }
+
     /// Lists recently updated sessions.
     ///
     /// # Errors
@@ -449,6 +563,20 @@ impl SessionStore {
                 CREATE INDEX IF NOT EXISTS idx_tool_calls_session_id
                     ON tool_calls(session_id, created_at);
 
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    scope TEXT NOT NULL CHECK (scope IN ('prompt', 'tool', 'worker', 'session')),
+                    source TEXT NOT NULL,
+                    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_token_usage_session_id
+                    ON token_usage(session_id, scope, created_at);
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
                     session_id UNINDEXED,
                     role UNINDEXED,
@@ -499,6 +627,16 @@ fn decode_tool_call_status(column: usize, status: &str) -> rusqlite::Result<Tool
     })
 }
 
+fn decode_token_scope(column: usize, scope: &str) -> rusqlite::Result<TokenScope> {
+    TokenScope::from_db(scope).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(InvalidTokenScope(scope.to_string())),
+        )
+    })
+}
+
 fn decode_json(column: usize, value: &str) -> rusqlite::Result<Value> {
     serde_json::from_str(value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
@@ -526,6 +664,17 @@ impl fmt::Display for InvalidToolCallStatus {
 }
 
 impl Error for InvalidToolCallStatus {}
+
+#[derive(Debug)]
+struct InvalidTokenScope(String);
+
+impl fmt::Display for InvalidTokenScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid token scope {}", self.0)
+    }
+}
+
+impl Error for InvalidTokenScope {}
 
 fn now_rfc3339() -> Result<String> {
     OffsetDateTime::now_utc()

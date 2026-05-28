@@ -17,6 +17,10 @@ use crate::memory::MemoryClient;
 use crate::messages::{Message, Role};
 use crate::model::{ChatRequest, ModelClient};
 use crate::session::SessionStore;
+use crate::tokens::{
+    TokenBudget, TokenBudgetCheck, TokenScope, TokenUsage, estimate_messages_tokens,
+    estimate_text_tokens,
+};
 
 const RECALL_LIMIT: u8 = 6;
 const RECALL_DEPTH: u8 = 1;
@@ -497,7 +501,12 @@ impl MultiAgentRuntime {
             .append_turn(&supervisor_session_id, Role::User, &request.objective)?;
 
         let synthesis = self
-            .synthesize(&request.objective, &worker_results, shared_memory)
+            .synthesize(
+                &supervisor_session_id,
+                &request.objective,
+                &worker_results,
+                shared_memory,
+            )
             .await;
         let synthesis = match synthesis {
             Ok(synthesis) => synthesis,
@@ -579,6 +588,20 @@ impl MultiAgentRuntime {
                 Role::Assistant,
                 worker_session_output(&execution),
             )?;
+            self.sessions.record_token_usage(
+                &execution.session_id,
+                TokenScope::Prompt,
+                &format!("worker:{}:prompt", execution.profile),
+                TokenUsage::estimated_prompt(execution.prompt_tokens),
+            )?;
+            if execution.token_usage.total_tokens > 0 {
+                self.sessions.record_token_usage(
+                    &execution.session_id,
+                    TokenScope::Worker,
+                    &format!("worker:{}", execution.profile),
+                    execution.token_usage,
+                )?;
+            }
             outputs.push(WorkerRunOutput {
                 task_id: execution.task_id,
                 profile: execution.profile,
@@ -599,6 +622,7 @@ impl MultiAgentRuntime {
 
     async fn synthesize(
         &self,
+        session_id: &str,
         objective: &str,
         workers: &[WorkerRunOutput],
         shared_memory: Option<String>,
@@ -614,6 +638,13 @@ impl MultiAgentRuntime {
             "Objective:\n{objective}\n\nWorker summaries:\n{}",
             format_worker_summaries(workers)
         )));
+        let prompt_tokens = estimate_messages_tokens(&messages);
+        self.sessions.record_token_usage(
+            session_id,
+            TokenScope::Prompt,
+            "supervisor:prompt",
+            TokenUsage::estimated_prompt(prompt_tokens),
+        )?;
 
         let output = self
             .model_client
@@ -622,10 +653,12 @@ impl MultiAgentRuntime {
                 messages,
             })
             .await?;
+        let fallback_usage = TokenUsage::new(prompt_tokens, estimate_text_tokens(&output.content));
+        let token_usage = output.usage.unwrap_or(fallback_usage).normalized();
 
         Ok(ModelSummary {
             content: output.content,
-            tokens_used: output.usage.map_or(0, |usage| usage.total_tokens),
+            tokens_used: token_usage.total_tokens,
         })
     }
 }
@@ -645,6 +678,8 @@ struct WorkerExecution {
     summary: String,
     error: Option<String>,
     tokens_used: u64,
+    prompt_tokens: u64,
+    token_usage: TokenUsage,
 }
 
 #[derive(Debug)]
@@ -661,6 +696,7 @@ async fn execute_worker(
 ) -> WorkerExecution {
     let timeout_duration = Duration::from_secs(call.spec.timeout_seconds);
     let messages = worker_messages(&call.spec, shared_memory);
+    let prompt_tokens = estimate_messages_tokens(&messages);
     let result = timeout(
         timeout_duration,
         model_client.chat(ChatRequest { model, messages }),
@@ -669,14 +705,20 @@ async fn execute_worker(
 
     match result {
         Ok(Ok(output)) => {
-            let tokens_used = output.usage.map_or(0, |usage| usage.total_tokens);
-            let error = if tokens_used > u64::from(call.spec.max_tokens) {
-                Some(format!(
+            let fallback_usage =
+                TokenUsage::new(prompt_tokens, estimate_text_tokens(&output.content));
+            let token_usage = output.usage.unwrap_or(fallback_usage).normalized();
+            let tokens_used = token_usage.total_tokens;
+            let budget = TokenBudget::new(u64::from(call.spec.max_tokens));
+            let error = match budget.check(tokens_used) {
+                TokenBudgetCheck::Exceeded {
+                    used_tokens,
+                    max_tokens,
+                } => Some(format!(
                     "{} worker exceeded token budget: used {} > max {}",
-                    call.spec.profile, tokens_used, call.spec.max_tokens
-                ))
-            } else {
-                None
+                    call.spec.profile, used_tokens, max_tokens
+                )),
+                TokenBudgetCheck::Within { .. } => None,
             };
             WorkerExecution {
                 task_id: call.task_id,
@@ -685,6 +727,8 @@ async fn execute_worker(
                 summary: output.content,
                 error,
                 tokens_used,
+                prompt_tokens,
+                token_usage,
             }
         }
         Ok(Err(error)) => WorkerExecution {
@@ -694,6 +738,8 @@ async fn execute_worker(
             summary: String::new(),
             error: Some(error.to_string()),
             tokens_used: 0,
+            prompt_tokens,
+            token_usage: TokenUsage::ZERO,
         },
         Err(_) => WorkerExecution {
             task_id: call.task_id,
@@ -705,6 +751,8 @@ async fn execute_worker(
                 call.spec.profile, timeout_duration
             )),
             tokens_used: 0,
+            prompt_tokens,
+            token_usage: TokenUsage::ZERO,
         },
     }
 }

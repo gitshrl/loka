@@ -28,12 +28,20 @@ async fn summarize_session_writes_proposal_first_wiki_note() {
             "Decision: implement Docker first, then SSH and cloud VM.",
         )
         .expect("assistant turn");
+    let tool_call_id = sessions
+        .record_tool_call_started(&session_id, "shell", &json!({ "command": "docker ps" }))
+        .expect("tool call");
+    sessions
+        .record_tool_call_failed(&tool_call_id, "docker daemon unavailable")
+        .expect("failed tool call");
 
     let completion = llm.mock(|when, then| {
         when.method(POST)
             .path("/v1/chat/completions")
             .body_includes("Summarize this Loka session")
-            .body_includes("Docker and SSH runtime support");
+            .body_includes("Docker and SSH runtime support")
+            .body_includes("shell")
+            .body_includes("docker daemon unavailable");
 
         then.status(200)
             .header("content-type", "application/json")
